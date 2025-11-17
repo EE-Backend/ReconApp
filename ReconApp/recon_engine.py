@@ -638,8 +638,8 @@ def generate_reconciliation_file(trial_balance_file, entries_file, icp_code):
     entries_df = pd.read_excel(entries_file)
 
     # 2. Load internal mapping files
-    mapping_accounts_df = pd.read_excel("static/mapping.xlsx", sheet_name="account_mapping")
-    mapping_dir_df      = pd.read_excel("static/mapping.xlsx", sheet_name="mapping_directory")
+    mapping_accounts_df = pd.read_excel("ReconApp/static/mapping.xlsx", sheet_name="account_mapping")
+    mapping_dir_df      = pd.read_excel("ReconApp/static/mapping.xlsx", sheet_name="mapping_directory")
 
     plc_df = pd.read_excel("static/PLC.xlsx")
 
