@@ -620,48 +620,6 @@ def finalize_and_save(trial_balance, entries, map_dir, ICP,
             max_len = max((len(str(c.value)) if c.value else 0 for c in col), default=0)
             ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max_len + 2
 
-    # 5) SAVE workbook (safe fallback if file locked)
-    out_path = Path(output_path)
-    try:
-        wb.save(out_path)
-        saved_path = out_path
-    except PermissionError:
-        alt = out_path.with_name(f"{out_path.stem}_{int(time.time())}{out_path.suffix}")
-        wb.save(alt)
-        saved_path = alt
-
-    # 6) Color sheet tabs via xlwings (keeps preceding logic intact)
-    try:
-        app = xw.App(visible=False)
-        wbx = app.books.open(str(saved_path))
-        GREEN = (0, 176, 80)
-        RED = (255, 0, 0)
-        GREY = (191, 191, 191)
-
-        def rgb_to_bgr_int(rgb):
-            r, g, b = rgb
-            return r + (g << 8) + (b << 16)
-
-        for sh in wbx.sheets:
-            if sh.name == "Trial Balance (YTD)":
-                sh.api.Tab.Color = rgb_to_bgr_int(GREY)
-                continue
-            stat = sheet_status.get(sh.name, None)
-            if not stat or stat["accounts"] == 0:
-                color = GREY
-            elif stat["mismatches"] == 0:
-                color = GREEN
-            else:
-                color = RED
-            sh.api.Tab.Color = rgb_to_bgr_int(color)
-
-        wbx.save()
-        wbx.close()
-        app.quit()
-    except Exception as e:
-        # If xlwings fails (no Windows COM environment), we still have the XLSX saved.
-        print("⚠️ Could not color sheet tabs with xlwings (not fatal):", e)
-
     print(f"✅ Workbook created successfully:\n{saved_path}")
     return str(saved_path)
 
