@@ -28,14 +28,14 @@ logo_path = STATIC_DIR / "logo.png"   # your actual logo
 # -------------------------------------------------------
 
 st.markdown(
-    f"""
+    """
     <div style="
         display:flex;
         align-items:center;
         justify-content:center;
-        gap:15px;                 /* ← 0.5 cm spacing */
+        gap:15px;                 /* ~0.5 cm spacing */
         margin-top:20px;
-        margin-bottom:40px;       /* space BEFORE Step 1 */
+        margin-bottom:40px;       /* spacing before Step 1 */
     ">
         <img src="static/logo.png" style="width:120px; border-radius:5px;">
         <h1 style="
@@ -50,6 +50,7 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
 
 
 # -------------------------------------------------------
@@ -113,6 +114,7 @@ if generate_button:
 # -------------------------------------------------------
 st.write("---")
 st.caption("EE Internal Tool — Powered by Streamlit")
+
 
 
 
