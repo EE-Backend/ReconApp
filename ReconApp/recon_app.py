@@ -33,7 +33,7 @@ st.write("Upload the required files below and generate a standardized reconcilia
 
 
 # --- LOGO (optional but recommended) --- #
-logo_path = Path("static/company_logo.png")
+logo_path = Path("ReconApp/static/company_logo.png")
 
 st.markdown("""
     <style>
@@ -113,6 +113,7 @@ if generate_button:
 
 st.write("---")
 st.caption("EE Internal Tool — Powered by Streamlit")
+
 
 
 
