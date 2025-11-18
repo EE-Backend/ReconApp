@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from pathlib import Path
-from recon_engine import generate_reconciliation_file
+
+from recon_engine import generate_reconciliation_file  # your backend logic
 
 
 # -------------------------------------------------------
@@ -13,48 +14,61 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📊 EE Recon File Generator")
-st.write("Upload the required files below and generate a standardized reconciliation workbook.")
-
-
 # -------------------------------------------------------
-# STATIC FOLDER (internal files)
+# PATHS
 # -------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-# LOGO FIX — your file is named logo.png
-logo_path = STATIC_DIR / "logo.png"
-
-if logo_path.exists():
-    st.image(str(logo_path), width=180)
-else:
-    st.warning(f"⚠ Logo not found at: {logo_path}")
+logo_path = STATIC_DIR / "logo.png"   # your actual logo
 
 
 # -------------------------------------------------------
-# INPUT SECTION
+# HEADER (logo + title in same row)
+# -------------------------------------------------------
+col1, col2 = st.columns([1, 8])
+
+with col1:
+    if logo_path.exists():
+        st.image(str(logo_path), width=70)   # <<< Smaller logo
+    else:
+        st.warning(f"⚠ Logo not found at: {logo_path}")
+
+with col2:
+    st.markdown(
+        """
+        <h1 style="margin-bottom:0px;">Recon File Generator</h1>
+        <p style="font-size:16px;margin-top:4px;">
+            Upload the required files below and generate a standardized reconciliation workbook.
+        </p>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+# -------------------------------------------------------
+# STEP 1 — FILE UPLOADS
 # -------------------------------------------------------
 st.header("Step 1 — Upload Inputs")
 
-# Upload Trial Balance
 trial_balance_file = st.file_uploader(
     "Upload Trial Balance file",
     type=["xlsx"],
-    key="trial_balance"
+    key="trial_balance_upload"
 )
 
-# Upload Entries
 entries_file = st.file_uploader(
     "Upload All Entries file",
     type=["xlsx"],
-    key="entries"
+    key="entries_upload"
 )
 
-# ICP Code
 icp_code = st.text_input("Enter ICP Code", placeholder="Example: SKPVAB")
 
 
+# -------------------------------------------------------
+# STEP 2 — GENERATE BUTTON
+# -------------------------------------------------------
 st.write("---")
 st.header("Step 2 — Generate Recon File")
 
@@ -62,7 +76,7 @@ generate_button = st.button("Generate Recon File", type="primary")
 
 
 # -------------------------------------------------------
-# PROCESSING
+# PROCESS FILES
 # -------------------------------------------------------
 if generate_button:
 
@@ -72,7 +86,6 @@ if generate_button:
 
     with st.spinner("⏳ Generating reconciliation file..."):
 
-        # Call engine logic
         output_bytes = generate_reconciliation_file(
             trial_balance_file,
             entries_file,
@@ -89,6 +102,8 @@ if generate_button:
     )
 
 
+# -------------------------------------------------------
+# FOOTER
+# -------------------------------------------------------
 st.write("---")
 st.caption("EE Internal Tool — Powered by Streamlit")
-
