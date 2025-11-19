@@ -64,6 +64,7 @@ ICP_TOTAL_ACCOUNTS = {
     "234110",
     "721000",
     "311000",
+}
 
 
 # === MAPPING LOAD/APPLY ===
