@@ -313,6 +313,7 @@ def build_workbook(trial_balance_df, entries_df, map_dir, acct_to_code, code_to_
                 # Header row
                 header_cell = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
                 account_anchor[acc_no] = (ws.title, row_cursor)
+                hyperlink_to_frontpage(header_cell)
                 header_cell.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
             
                 if abs(net_sum - tb_bal) > tolerance:
@@ -359,6 +360,7 @@ def build_workbook(trial_balance_df, entries_df, map_dir, acct_to_code, code_to_
             
                 header_cell = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
                 account_anchor[acc_no] = (ws.title, row_cursor)
+                hyperlink_to_frontpage(header_cell)
                 header_cell.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
                 if abs(net_sum - tb_bal) > tolerance:
                     sheet_mismatch = True
@@ -399,6 +401,7 @@ def build_workbook(trial_balance_df, entries_df, map_dir, acct_to_code, code_to_
 
                 header_cell = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
                 account_anchor[acc_no] = (ws.title, row_cursor)
+                hyperlink_to_frontpage(header_cell)
                 header_cell.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
                 if abs(net_sum - tb_bal) > tolerance:
                     sheet_mismatch = True
@@ -437,6 +440,7 @@ def build_workbook(trial_balance_df, entries_df, map_dir, acct_to_code, code_to_
 
             header_cell = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
             account_anchor[acc_no] = (ws.title, row_cursor)
+            hyperlink_to_frontpage(header_cell)
             header_cell.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
             if abs(net_sum - tb_bal) > tolerance:
                 sheet_mismatch = True
