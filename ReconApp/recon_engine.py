@@ -10,7 +10,7 @@ import openpyxl.utils
 import time
 
 # === CONFIG / Defaults ===
-TOLERANCE = 0.01
+TOLERANCE = 0.001
 
 # By default mapping and plc files are expected in ./static/
 BASE_DIR = Path(__file__).parent
