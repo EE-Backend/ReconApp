@@ -1,249 +1,272 @@
-# ======================================================
-# STREAMLIT RECON-FILE GENERATOR (NO LOGIC MODIFIED)
-# ======================================================
-
-import streamlit as st
+# recon_engine.py
 import pandas as pd
 from pathlib import Path
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Border, Side
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.formatting.rule import FormulaRule
 import openpyxl.utils
 import time
 
-# ------------------------------------------------------
-# Streamlit page setup
-# ------------------------------------------------------
-st.set_page_config(
-    page_title="Recon File Generator",
-    layout="wide"
-)
+# === CONFIG / Defaults ===
+TOLERANCE = 0.001
 
-st.title("🧾 EE Recon File Generator")
-st.write("Upload the Trial Balance and Entries, input ICP Code, and generate the full Recon Workbook.")
+# By default mapping and plc files are expected in ./static/
+BASE_DIR = Path(__file__).parent
+STATIC_DIR = BASE_DIR / "static"
+DEFAULT_MAPPING = STATIC_DIR / "mapping.xlsx"
+DEFAULT_PLC = STATIC_DIR / "PLC.xlsx"
 
-# ------------------------------------------------------
-# REQUIRED INTERNAL FILES (NOT uploaded by user)
-# ------------------------------------------------------
-MAPPING_FILE = Path("static/mapping.xlsx")
-PLC_FILE = Path("static/PLC.xlsx")
 
-if not MAPPING_FILE.exists():
-    st.error("❌ mapping.xlsx not found in the app folder. Please upload it once at deployment.")
-    st.stop()
+# === HELPERS ===
+def normalize_account(val):
+    if pd.isna(val):
+        return ""
+    return "".join(ch for ch in str(val) if ch.isdigit())
 
-if not PLC_FILE.exists():
-    st.error("❌ PLC.xlsx not found in the app folder. Please upload it once at deployment.")
-    st.stop()
 
-# ------------------------------------------------------
-# USER INPUTS
-# ------------------------------------------------------
+def to_float(val):
+    if pd.isna(val):
+        return 0.0
+    val = str(val).replace(",", ".").replace(" ", "")
+    try:
+        return round(float(val), 2)
+    except:
+        return 0.0
 
-st.header("1. Upload Required Files")
+def hyperlink_to_frontpage(cell):
+    """Convert a cell into a hyperlink pointing back to the frontpage."""
+    cell.hyperlink = "#Frontpage!A1"
+    cell.style = "Hyperlink"
 
-trial_balance_upload = st.file_uploader(
-    "Upload Trial Balance",
-    type=["xlsx"],
-    accept_multiple_files=False
-)
 
-entries_upload = st.file_uploader(
-    "Upload Entries",
-    type=["xlsx"],
-    accept_multiple_files=False
-)
+def _normalize_code(x):
+    """Return consistent code strings (e.g., 101, 101.0, ' 101 ') -> '101'."""
+    if pd.isna(x):
+        return None
+    try:
+        f = float(x)
+        return str(int(f)) if f.is_integer() else str(f).rstrip("0").rstrip(".")
+    except:
+        s = str(x).strip()
+        if s.replace(".", "", 1).isdigit():
+            try:
+                f = float(s)
+                return str(int(f)) if f.is_integer() else s
+            except:
+                pass
+        return s
 
-st.header("2. Enter ICP Code")
-ICP = st.text_input("ICP Code (e.g. SKPVAB)").strip().upper()
 
-# ------------------------------------------------------
-# LOAD INTERNAL FILES
-# ------------------------------------------------------
-@st.cache_data
-def load_internal_mapping():
-    book = pd.read_excel(MAPPING_FILE, sheet_name=None)
+# Accounts that must use ICP–totals logic (same as 731000 & 321000)
+ICP_TOTAL_ACCOUNTS = {
+    "731000",
+    "321000",
+    "321001",
+    "731001",
+    "634010",
+    "234110",
+}
+
+
+# === MAPPING LOAD/APPLY ===
+def load_mapping(mapping_path=None):
+    """
+    Returns: acct_to_code (dict), code_to_meta (dict), map_dir (DataFrame)
+    Expects mapping_path to be an Excel workbook with sheets:
+      - account_mapping (with columns: Account no., Mapping)
+      - mapping_directory (with columns: code, header, sheet)
+    """
+    mapping_path = Path(mapping_path) if mapping_path else DEFAULT_MAPPING
+    if not mapping_path.exists():
+        raise FileNotFoundError(f"Mapping file not found at {mapping_path}")
+
+    book = pd.read_excel(mapping_path, sheet_name=None)
 
     if "account_mapping" not in book or "mapping_directory" not in book:
-        raise KeyError("mapping.xlsx must contain 'account_mapping' and 'mapping_directory' sheets.")
+        raise KeyError("mapping.xlsx must include sheets 'account_mapping' and 'mapping_directory'")
 
-    return book["account_mapping"], book["mapping_directory"]
-
-@st.cache_data
-def load_internal_plc():
-    return pd.read_excel(PLC_FILE, engine="openpyxl")
-
-mapping_accounts_df, mapping_dir_df = load_internal_mapping()
-plc_df = load_internal_plc()
-
-# ------------------------------------------------------
-# BUTTON
-# ------------------------------------------------------
-
-generate = st.button("Generate Recon File", type="primary")
-
-if generate:
-    if trial_balance_upload is None or entries_upload is None or ICP == "":
-        st.error("Please upload both files and input ICP Code.")
-        st.stop()
-
-    with st.spinner("Generating Recon File… please wait, this may take up to 20 seconds…"):
-
-        # LOAD USER FILES
-        trial_balance_df = pd.read_excel(trial_balance_upload)
-        entries_df = pd.read_excel(entries_upload)
-
-        # The next section calls your full original logic…
-        # The function is defined in MESSAGE 2
-        try:
-            output_bytes = build_recon_workbook(
-                trial_balance_df,
-                entries_df,
-                mapping_accounts_df,
-                mapping_dir_df,
-                plc_df,
-                ICP
-            )
-        except Exception as e:
-            st.error(f"❌ Error during generation: {e}")
-            raise
-
-        st.success("Recon File Generated Successfully!")
-
-        st.download_button(
-            label="⬇️ Download Reconciliation_Mapped.xlsx",
-            data=output_bytes,
-            file_name="Reconciliation_Mapped.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-# === LOAD DATA (Streamlit will pass file-like objects instead of paths) ===
-def load_input_files(trial_balance_file, entries_file, mapping_file, icp_code):
-    """
-    Returns:
-        trial_balance, entries, mapping_dir, acct_to_code, code_to_meta, ICP
-    """
-    ICP = icp_code.strip().upper()
-
-    trial_balance = pd.read_excel(trial_balance_file)
-    entries = pd.read_excel(entries_file)
-
-    acct_to_code, code_to_meta, map_dir = load_mapping(mapping_file)
-    trial_balance = apply_mapping(trial_balance, acct_to_code, code_to_meta)
+    map_accounts = book["account_mapping"].rename(columns={"Mapping": "code"}).copy()
+    map_dir = book["mapping_directory"].copy()
 
     # Normalize
-    entries.rename(
-        columns=lambda c: "Amount (LCY)" if str(c).strip().lower() in ["amount", "amount (lcy)"] else c,
-        inplace=True
-    )
-    entries.rename(
-        columns=lambda c: "ICP CODE" if str(c).strip().lower() == "icp code" else c,
-        inplace=True
-    )
+    map_accounts["Account no."] = map_accounts["Account no."].astype(str).str.strip().apply(normalize_account)
+    map_accounts["code"] = map_accounts["code"].apply(_normalize_code)
 
-    trial_balance["Balance at Date"] = trial_balance["Balance at Date"].apply(to_float)
-    entries["G/L Account No."] = entries["G/L Account No."].apply(normalize_account)
-    entries["Amount (LCY)"] = entries["Amount (LCY)"].apply(to_float)
-    entries["Posting Date"] = pd.to_datetime(entries["Posting Date"], errors="coerce").dt.date
+    map_dir["code"] = map_dir["code"].apply(_normalize_code)
+    map_dir["header"] = map_dir["header"].astype(str).str.strip()
+    map_dir["sheet"] = map_dir["sheet"].astype(str).str.strip()
 
-    return trial_balance, entries, acct_to_code, code_to_meta, map_dir, ICP
+    acct_to_code = map_accounts.set_index("Account no.")["code"].to_dict()
+    code_to_meta = map_dir.set_index("code")[["header", "sheet"]].to_dict(orient="index")
+
+    return acct_to_code, code_to_meta, map_dir
 
 
-# === EXCEL STYLES ===
+def apply_mapping(trial_balance, acct_to_code, code_to_meta, bank_code="19", bank_ranges=((390000, 399999),)):
+    tb = trial_balance.copy()
+    tb["No."] = tb["No."].astype(str).str.strip().apply(normalize_account)
+    tb["code"] = tb["No."].map(acct_to_code)
+
+    def _in_ranges(acc_str, ranges):
+        return bool(acc_str) and acc_str.isdigit() and any(lo <= int(acc_str) <= hi for lo, hi in ranges)
+
+    unmapped = tb["code"].isna()
+    tb.loc[unmapped & tb["No."].apply(lambda s: _in_ranges(s, bank_ranges)), "code"] = bank_code
+
+    tb["header"] = tb["code"].map(lambda c: code_to_meta.get(c, {}).get("header"))
+    tb["sheet_group"] = tb["code"].map(lambda c: code_to_meta.get(c, {}).get("sheet"))
+    tb["sheet_group"] = tb["sheet_group"].fillna("Unmapped").astype(str).str.strip()
+    return tb
+
+
+# === STYLES / BORDERS / FORMATS ===
 thin = Side(border_style="thin", color="000000")
 thick = Side(border_style="medium", color="000000")
 
 green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-red_fill   = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-header_fill = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
-entry_fill  = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
-total_fill  = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
+red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+header_fill = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")  # header darker
+entry_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")   # lighter
+total_fill = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")    # totals
 
 
-# === BORDER DRAWING (unchanged) ===
 def apply_borders(ws, top, bottom, left, right):
+    """
+    Draw neat rectangle with thick external lines and thin internal lines
+    Ensures thick border above/below column A and last Amount column as requested.
+    """
+    # thin grid everywhere in the block
     for r in range(top, bottom + 1):
         for c in range(left, right + 1):
             ws.cell(r, c).border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    # Thick borders
+    # thick top and bottom across the full block
     for c in range(left, right + 1):
-        ws.cell(top, c).border    = Border(top=thick, left=thin, right=thin, bottom=thin)
-        ws.cell(bottom, c).border = Border(bottom=thick, left=thin, right=thin, top=thin)
+        top_cell = ws.cell(top, c)
+        bottom_cell = ws.cell(bottom, c)
+        top_cell.border = Border(top=thick, left=top_cell.border.left, right=top_cell.border.right, bottom=top_cell.border.bottom)
+        bottom_cell.border = Border(bottom=thick, left=bottom_cell.border.left, right=bottom_cell.border.right, top=bottom_cell.border.top)
 
+    # thick left & right sides
     for r in range(top, bottom + 1):
-        ws.cell(r, left).border  = Border(left=thick, top=thin, bottom=thin, right=thin)
-        ws.cell(r, right).border = Border(right=thick, top=thin, bottom=thin, left=thin)
+        left_cell = ws.cell(r, left)
+        right_cell = ws.cell(r, right)
+        left_cell.border = Border(left=thick, top=left_cell.border.top, bottom=left_cell.border.bottom, right=left_cell.border.right)
+        right_cell.border = Border(right=thick, top=right_cell.border.top, bottom=right_cell.border.bottom, left=right_cell.border.left)
 
-    # Corners
-    ws.cell(top, left).border     = Border(top=thick, left=thick, right=thin, bottom=thin)
-    ws.cell(top, right).border    = Border(top=thick, right=thick, left=thin, bottom=thin)
-    ws.cell(bottom, left).border  = Border(bottom=thick, left=thick, right=thin, top=thin)
+    # corners: ensure they have both thick sides
+    ws.cell(top, left).border = Border(top=thick, left=thick, right=thin, bottom=thin)
+    ws.cell(top, right).border = Border(top=thick, right=thick, left=thin, bottom=thin)
+    ws.cell(bottom, left).border = Border(bottom=thick, left=thick, right=thin, top=thin)
     ws.cell(bottom, right).border = Border(bottom=thick, right=thick, left=thin, top=thin)
 
 
-# === INTERNAL ZEROING (unchanged) ===
-def remove_internal_zeroes(df, tol=0.01):
-    df = df.sort_values("Posting Date", ascending=True).reset_index(drop=True)
-    keep = [True] * len(df)
+# === INTERNAL ZEROING ===
+def remove_internal_zeroes(df, tol=TOLERANCE):
+    """
+    Remove internal cancelling entries when:
+      - ICP CODE is the same (or empty/NaN in both lines), and
+      - GAAP Code is the same (or empty/NaN in both lines), and
+      - Amounts sum to ~0 within tolerance.
 
+    Document No. is intentionally ignored.
+
+    Then, within each (ICP, GAAP) bucket, perform cumulative zero-block
+    trimming: drop entries up to the last point where that bucket's
+    cumulative sum returns to (approx.) zero.
+    """
+    if df.empty:
+        return df
+
+    # Sort chronologically
+    df = df.sort_values("Posting Date", ascending=True).reset_index(drop=True)
+
+    def _norm_key(x):
+        """Normalize ICP/GAAP for grouping & equality: treat NaN/empty as ''."""
+        if pd.isna(x):
+            return ""
+        return str(x).strip()
+
+    # Normalized keys used for both pairwise and cumulative logic
+    df["_icp_norm"] = df["ICP CODE"].apply(_norm_key) if "ICP CODE" in df.columns else ""
+    df["_gaap_norm"] = df["GAAP Code"].apply(_norm_key) if "GAAP Code" in df.columns else ""
+
+    # ---------- 1) Pairwise zero removal within same ICP/GAAP ----------
+    keep = [True] * len(df)
     for i in range(len(df)):
         if not keep[i]:
             continue
         for j in range(i + 1, len(df)):
-            same_keys = (
-                df.loc[i, "Document No."] == df.loc[j, "Document No."]
-                and df.loc[i, "ICP CODE"] == df.loc[j, "ICP CODE"]
-                and df.loc[i, "GAAP Code"] == df.loc[j, "GAAP Code"]
-            )
+            if not keep[j]:
+                continue
 
-            if same_keys and keep[j] and abs(df.loc[i, "Amount (LCY)"] + df.loc[j, "Amount (LCY)"]) <= tol:
+            same_icp = (df.loc[i, "_icp_norm"] == df.loc[j, "_icp_norm"])
+            same_gaap = (df.loc[i, "_gaap_norm"] == df.loc[j, "_gaap_norm"])
+
+            if same_icp and same_gaap and abs(df.loc[i, "Amount (LCY)"] + df.loc[j, "Amount (LCY)"]) < tol:
+                # Exact opposite pair within same ICP/GAAP bucket -> drop both
                 keep[i] = keep[j] = False
                 break
 
     df = df[keep].copy()
 
-    df["cum"] = df["Amount (LCY)"].cumsum().round(2)
-    zero_indices = df.index[abs(df["cum"]) <= tol].tolist()
+    # ---------- 2) Cumulative zero trimming per (ICP, GAAP) bucket ----------
+    def _trim_group(g):
+        if g.empty:
+            return g
+        g = g.copy()
+        g["cum"] = g["Amount (LCY)"].cumsum().round(2)
+        zero_idx = g.index[g["cum"].abs() < tol].tolist()
+        if zero_idx:
+            last_zero = zero_idx[-1]
+            g = g.loc[g.index > last_zero]
+        g = g.drop(columns=["cum"])
+        return g
 
-    if zero_indices:
-        df = df.loc[zero_indices[-1] + 1:].copy()
+    df = df.groupby(["_icp_norm", "_gaap_norm"], group_keys=False).apply(_trim_group)
+
+    # Clean up helper columns and reindex
+    df = df.drop(columns=["_icp_norm", "_gaap_norm"], errors="ignore").reset_index(drop=True)
 
     return df
 
-    # === CREATE WORKBOOK ===
-def build_workbook(trial_balance, entries, map_dir, ICP):
+
+
+# === WORKBOOK BUILDING ===
+def build_workbook(trial_balance_df, entries_df, map_dir, acct_to_code, code_to_meta, ICP, tolerance=TOLERANCE):
+    """
+    Returns: openpyxl.Workbook object, sheet_status dict, account_anchor dict, mismatch_accounts list
+    """
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
     # === TRIAL BALANCE TAB ===
     ws_tb = wb.create_sheet("Trial Balance (YTD)", 0)
-
-    # Write headers
-    for c_idx, col in enumerate(trial_balance.columns, 1):
+    for c_idx, col in enumerate(trial_balance_df.columns, 1):
         ws_tb.cell(1, c_idx, col).font = Font(bold=True)
-
-    # Write data
-    for r_idx, row in enumerate(trial_balance.itertuples(index=False), 2):
+    for r_idx, row in enumerate(trial_balance_df.itertuples(index=False), 2):
         for c_idx, val in enumerate(row, 1):
             ws_tb.cell(r_idx, c_idx, val)
 
-    # Autofit
+    # Autofit for trial balance
     for col in ws_tb.columns:
         max_len = max((len(str(c.value)) if c.value else 0 for c in col), default=0)
         ws_tb.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max_len + 2
 
-    # === ACCOUNT OVERVIEW SECTION ===
+    # === ACCOUNT OVERVIEW (mapped groups) ===
     sheet_order = list(map_dir["sheet"].unique()) + ["Unmapped"]
     cols_needed = ["Posting Date", "Description", "Document No.", "ICP CODE", "GAAP Code", "Amount (LCY)"]
-    cols_present = [c for c in cols_needed if c in entries.columns]
+    cols_present = [c for c in cols_needed if c in entries_df.columns]
 
     sheet_status = {}
-    account_anchor = {}  # {acc_no: (sheetname, row)}
+    account_anchor = {}
+    mismatch_accounts = []  # NEW
 
+    # iterate mapping order
     for sheet_name in sheet_order:
-
-        subset = trial_balance[trial_balance["sheet_group"] == sheet_name]
+        subset = trial_balance_df[trial_balance_df["sheet_group"] == sheet_name]
         if subset.empty:
             continue
 
@@ -252,133 +275,122 @@ def build_workbook(trial_balance, entries, map_dir, ICP):
         sheet_mismatch = False
         account_count = 0
 
-        # Loop accounts
         for _, tb in subset.sort_values("No.").iterrows():
-
             acc_no = str(tb["No."])
             acc_name = tb.get("Name", "")
             tb_bal = tb.get("Balance at Date", 0.0)
 
-            acc_df = entries[entries["G/L Account No."] == acc_no].copy()
+            acc_df = entries_df[entries_df["G/L Account No."] == acc_no].copy()
             if acc_df.empty:
                 continue
 
             account_count += 1
+
+            # Year trimming: drop prior years that net to 0 (keep latest year always)
+            acc_df = acc_df.sort_values("Posting Date", ascending=True).reset_index(drop=True)
+            acc_df["Year"] = pd.to_datetime(acc_df["Posting Date"], errors="coerce").dt.year.fillna(0).astype(int)
+            if acc_df["Year"].nunique() > 1:
+                years = sorted(acc_df["Year"].unique())
+                for y in years[:-1]:
+                    y_sum = round(acc_df.loc[acc_df["Year"] == y, "Amount (LCY)"].sum(), 2)
+                    if abs(y_sum) < tolerance:
+                        acc_df = acc_df[acc_df["Year"] != y]
+
+            if acc_df.empty:
+                continue
+
+            # remove internal zeroes (only when Document No., ICP and GAAP match)
             acc_df = remove_internal_zeroes(acc_df)
 
-            # ========= SPECIAL CASE 731000 (Totals per ICP) ==========
-            if acc_no == "731000":
-                acc_df = (
-                    acc_df.groupby("ICP CODE", as_index=False)["Amount (LCY)"].sum()
-                )
-                acc_df["Description"] = acc_df["ICP CODE"]
-                acc_df["Document No."] = ""
-                acc_df["GAAP Code"] = ""
-                acc_df = acc_df[["Description", "Document No.", "ICP CODE", "GAAP Code", "Amount (LCY)"]]
+            if acc_df.empty:
+                continue
 
-                net_sum = round(acc_df["Amount (LCY)"].sum(), 2)
 
-                header = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
+            # === Special accounts using ICP totals logic ===
+            if acc_no in ICP_TOTAL_ACCOUNTS:
+                grouped = acc_df.groupby("ICP CODE", as_index=False)["Amount (LCY)"].sum()
+                grouped["Description"] = grouped["ICP CODE"]
+                grouped["Document No."] = ""
+                grouped["GAAP Code"] = ""
+                acc_view = grouped[["Description", "Document No.", "ICP CODE", "GAAP Code", "Amount (LCY)"]].copy()
+                net_sum = round(acc_view["Amount (LCY)"].sum(), 2)
+            
+                # Header row
+                header_cell = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
                 account_anchor[acc_no] = (ws.title, row_cursor)
-                header.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
-
+                hyperlink_to_frontpage(header_cell)
+                header_cell.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
+            
                 if abs(net_sum - tb_bal) > tolerance:
                     sheet_mismatch = True
-
+                    mismatch_accounts.append({
+                        "No": acc_no,
+                        "Name": acc_name,
+                        "tb_balance": tb_bal,
+                        "entries_sum": net_sum,
+                        "difference": round(net_sum - tb_bal, 2),
+                    })
+            
                 row_cursor += 1
                 block_start = row_cursor
-
+            
                 # Column headers
-                cols_731 = ["Description", "Document No.", "ICP CODE", "GAAP Code", "Amount (LCY)"]
-                for c_idx, col in enumerate(cols_731, 1):
+                cols = ["Description", "Document No.", "ICP CODE", "GAAP Code", "Amount (LCY)"]
+                for c_idx, col in enumerate(cols, 1):
                     ws.cell(row=row_cursor, column=c_idx, value=col).font = Font(bold=True)
                     ws.cell(row=row_cursor, column=c_idx).fill = header_fill
                 row_cursor += 1
-
-                # Entries
-                for _, e in acc_df.iterrows():
-                    for c_idx, col in enumerate(cols_731, 1):
-                        ws.cell(row=row_cursor, column=c_idx, value=e.get(col, ""))
-                        ws.cell(row=row_cursor, column=c_idx).fill = entry_fill
+            
+                # Rows
+                for _, r in acc_view.iterrows():
+                    for c_idx, col in enumerate(cols, 1):
+                        cell = ws.cell(row=row_cursor, column=c_idx, value=r.get(col, ""))
+                        cell.fill = entry_fill
                     row_cursor += 1
-
-                # Totals
+            
+                # Total row
                 ws.cell(row=row_cursor, column=4, value="Account Total").font = Font(bold=True)
-                ws.cell(row=row_cursor, column=5, value=net_sum).font = Font(bold=True)
+                vcell = ws.cell(row=row_cursor, column=5, value=net_sum)
+                vcell.font = Font(bold=True)
                 for c in range(1, 6):
                     ws.cell(row=row_cursor, column=c).fill = total_fill
-
+            
                 apply_borders(ws, block_start, row_cursor, 1, 5)
                 row_cursor += 3
                 continue
 
-            # ========= SPECIAL CASE 321000 (same logic as 731000) ==========
-            if acc_no == "321000":
-                acc_df = (
-                    acc_df.groupby("ICP CODE", as_index=False)["Amount (LCY)"].sum()
-                )
-                acc_df["Description"] = acc_df["ICP CODE"]
-                acc_df["Document No."] = ""
-                acc_df["GAAP Code"] = ""
-                acc_df = acc_df[["Description", "Document No.", "ICP CODE", "GAAP Code", "Amount (LCY)"]]
-
+            # Special: accounts 311000 and 721000 → show ONLY one total line (no ICP grouping)
+            if acc_no in ["311000", "721000"]:
                 net_sum = round(acc_df["Amount (LCY)"].sum(), 2)
-
-                header = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
+            
+                header_cell = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
                 account_anchor[acc_no] = (ws.title, row_cursor)
-                header.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
-
+                hyperlink_to_frontpage(header_cell)
+                header_cell.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
                 if abs(net_sum - tb_bal) > tolerance:
                     sheet_mismatch = True
-
+                    mismatch_accounts.append({
+                        "No": acc_no,
+                        "Name": acc_name,
+                        "tb_balance": tb_bal,
+                        "entries_sum": net_sum,
+                        "difference": round(net_sum - tb_bal, 2),
+                    })
+            
                 row_cursor += 1
                 block_start = row_cursor
-
-                cols_321 = ["Description", "Document No.", "ICP CODE", "GAAP Code", "Amount (LCY)"]
-                for c_idx, col in enumerate(cols_321, 1):
-                    ws.cell(row=row_cursor, column=c_idx, value=col).font = Font(bold=True)
-                    ws.cell(row=row_cursor, column=c_idx).fill = header_fill
-                row_cursor += 1
-
-                for _, e in acc_df.iterrows():
-                    for c_idx, col in enumerate(cols_321, 1):
-                        ws.cell(row=row_cursor, column=c_idx, value=e.get(col, ""))
-                        ws.cell(row=row_cursor, column=c_idx).fill = entry_fill
-                    row_cursor += 1
-
-                ws.cell(row=row_cursor, column=4, value="Account Total").font = Font(bold=True)
-                ws.cell(row=row_cursor, column=5, value=net_sum).font = Font(bold=True)
-                for c in range(1, 6):
-                    ws.cell(row=row_cursor, column=c).fill = total_fill
-
-                apply_borders(ws, block_start, row_cursor, 1, 5)
-                row_cursor += 3
-                continue
-
-            # ========= SPECIAL CASE 390000–399999 (Totals-only with note) ==========
-            if acc_no.isdigit() and 390000 <= int(acc_no) <= 399999:
-                net_sum = round(acc_df["Amount (LCY)"].sum(), 2)
-
-                header = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
-                account_anchor[acc_no] = (ws.title, row_cursor)
-                header.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
-
-                if abs(net_sum - tb_bal) > tolerance:
-                    sheet_mismatch = True
-
-                row_cursor += 1
-                block_start = row_cursor
-
-                # Row 1 — labels
+            
+                # First row: labels (Note header + Account Total label)
                 ws.cell(row=row_cursor, column=1, value="Note").font = Font(bold=True)
                 ws.cell(row=row_cursor, column=6, value="Account Total").font = Font(bold=True)
                 for c in range(1, 7):
                     ws.cell(row=row_cursor, column=c).fill = total_fill
                 row_cursor += 1
 
-                # Row 2 — content
+                # Second row: content - (See documentation) + total
                 ws.cell(row=row_cursor, column=1, value="(See documentation)")
-                ws.cell(row=row_cursor, column=6, value=net_sum)
+                vcell = ws.cell(row=row_cursor, column=6, value=net_sum)
+                vcell.number_format = "#,##0.00"
                 for c in range(1, 7):
                     ws.cell(row=row_cursor, column=c).fill = entry_fill
 
@@ -386,17 +398,64 @@ def build_workbook(trial_balance, entries, map_dir, ICP):
                 row_cursor += 3
                 continue
 
-            # ========= NORMAL ACCOUNTS ==========
-            acc_df = acc_df.sort_values("Posting Date", ascending=False)
+            
 
+            # Special: bank/cash accounts 390000–399999 -> totals only with note (See documentation)
+            if acc_no.isdigit() and 390000 <= int(acc_no) <= 399999:
+                net_sum = round(acc_df["Amount (LCY)"].sum(), 2)
+
+                header_cell = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
+                account_anchor[acc_no] = (ws.title, row_cursor)
+                hyperlink_to_frontpage(header_cell)
+                header_cell.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
+                if abs(net_sum - tb_bal) > tolerance:
+                    sheet_mismatch = True
+                    mismatch_accounts.append({
+                        "No": acc_no,
+                        "Name": acc_name,
+                        "tb_balance": tb_bal,
+                        "entries_sum": net_sum,
+                        "difference": round(net_sum - tb_bal, 2),
+                    })
+
+                row_cursor += 1
+                block_start = row_cursor
+
+                # First row: labels (Note header + Account Total label)
+                ws.cell(row=row_cursor, column=1, value="Note").font = Font(bold=True)
+                ws.cell(row=row_cursor, column=6, value="Account Total").font = Font(bold=True)
+                for c in range(1, 7):
+                    ws.cell(row=row_cursor, column=c).fill = total_fill
+                row_cursor += 1
+
+                # Second row: content - (See documentation) + total
+                ws.cell(row=row_cursor, column=1, value="(See documentation)")
+                vcell = ws.cell(row=row_cursor, column=6, value=net_sum)
+                vcell.number_format = "#,##0.00"
+                for c in range(1, 7):
+                    ws.cell(row=row_cursor, column=c).fill = entry_fill
+
+                apply_borders(ws, block_start, row_cursor, 1, 6)
+                row_cursor += 3
+                continue
+
+            # Normal accounts: show full list newest -> oldest
+            acc_df = acc_df.sort_values("Posting Date", ascending=False)
             net_sum = round(acc_df["Amount (LCY)"].sum(), 2)
 
-            header = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
+            header_cell = ws.cell(row=row_cursor, column=1, value=f"{acc_no} - {acc_name}")
             account_anchor[acc_no] = (ws.title, row_cursor)
-            header.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
-
+            hyperlink_to_frontpage(header_cell)
+            header_cell.fill = green_fill if abs(net_sum - tb_bal) <= tolerance else red_fill
             if abs(net_sum - tb_bal) > tolerance:
                 sheet_mismatch = True
+                mismatch_accounts.append({
+                    "No": acc_no,
+                    "Name": acc_name,
+                    "tb_balance": tb_bal,
+                    "entries_sum": net_sum,
+                    "difference": round(net_sum - tb_bal, 2),
+                })
 
             row_cursor += 1
             block_start = row_cursor
@@ -407,47 +466,48 @@ def build_workbook(trial_balance, entries, map_dir, ICP):
                 ws.cell(row=row_cursor, column=c_idx).fill = header_fill
             row_cursor += 1
 
-            # Entries
+            # Rows: entries
             for _, e in acc_df.iterrows():
                 for c_idx, col in enumerate(cols_present, 1):
-                    ws.cell(row=row_cursor, column=c_idx, value=e.get(col, ""))
-                    ws.cell(row=row_cursor, column=c_idx).fill = entry_fill
+                    val = e.get(col, "")
+                    cell = ws.cell(row=row_cursor, column=c_idx, value=val)
+                    cell.fill = entry_fill
                 row_cursor += 1
 
-            # Totals
-            ws.cell(row=row_cursor, column=len(cols_present)-1, value="Account Total").font = Font(bold=True)
-            ws.cell(row=row_cursor, column=len(cols_present),   value=net_sum).font = Font(bold=True)
-
+            # Totals row
+            ws.cell(row=row_cursor, column=len(cols_present) - 1, value="Account Total").font = Font(bold=True)
+            total_cell = ws.cell(row=row_cursor, column=len(cols_present), value=net_sum)
+            total_cell.font = Font(bold=True)
             for c in range(1, len(cols_present) + 1):
                 ws.cell(row=row_cursor, column=c).fill = total_fill
 
             apply_borders(ws, block_start, row_cursor, 1, len(cols_present))
             row_cursor += 3
 
-        sheet_status[sheet_name] = {
-            "mismatches": int(sheet_mismatch),
-            "accounts": account_count
-        }
+        sheet_status[sheet_name] = {"mismatches": int(sheet_mismatch), "accounts": account_count}
 
-    return wb, sheet_status, account_anchor
+    return wb, sheet_status, account_anchor, mismatch_accounts
 
-# -----------------------
-# ✅ MESSAGE 3 — Finalize workbook: Frontpage, save, color tabs
-# -----------------------
 
-def finalize_and_save(trial_balance, entries, map_dir, ICP,
-                      build_fn=build_workbook,
-                      plc_filename="PLC.xlsx",
-                      output_path=output_file):
+# === FINALIZE: front page, formatting, save to bytes ===
+def finalize_workbook_to_bytes(
+    wb,
+    sheet_status,
+    account_anchor,
+    trial_balance_df,
+    entries_df,
+    ICP,
+    plc_path=None,
+    tolerance=TOLERANCE,
+    mismatch_accounts=None,
+):
     """
-    Build full workbook (calls build_workbook), add front page, format numbers/dates,
-    save workbook and color sheet tabs with xlwings.
-    Returns path to saved file.
+    Adds front page, number/date formatting, hides gridlines, autofit, and returns bytes buffer.
     """
-    # 1) Build sheets for accounts
-    wb, sheet_status, account_anchor = build_fn(trial_balance, entries, map_dir, ICP)
+    if mismatch_accounts is None:
+        mismatch_accounts = []
 
-    # 2) FRONT PAGE (PLC header cards + autogenerated comments + hyperlinks)
+    # FRONT PAGE
     from warnings import filterwarnings
     filterwarnings("ignore", message="Data Validation extension is not supported and will be removed")
 
@@ -455,24 +515,19 @@ def finalize_and_save(trial_balance, entries, map_dir, ICP,
     ws_front["A1"] = "EE Reconciliation Overview"
     ws_front["A1"].font = Font(size=16, bold=True)
 
-    # Load PLC (optional but expected)
-    plc_path = Path(folder) / plc_filename
+    # PLC (optional)
     plc_norm = None
+    plc_path = Path(plc_path) if plc_path else DEFAULT_PLC
     try:
-        plc_df = pd.read_excel(plc_path, engine="openpyxl")
-        plc_norm = plc_df.copy()
-        plc_norm.columns = [c.strip() for c in plc_norm.columns]
-        required = ["ICP code", "Company name", "Accountant", "Controller"]
-        missing_cols = [c for c in required if c not in plc_norm.columns]
-        if missing_cols:
-            raise KeyError(f"Missing columns in PLC.xlsx: {missing_cols}")
-        plc_norm["ICP code_norm"] = plc_norm["ICP code"].astype(str).str.strip().str.upper()
-        plc_norm["Company name"]   = plc_norm["Company name"].astype(str).str.strip()
-        plc_norm["Accountant"]     = plc_norm["Accountant"].astype(str).str.strip()
-        plc_norm["Controller"]     = plc_norm["Controller"].astype(str).str.strip()
-    except FileNotFoundError:
-        plc_norm = None
-    except Exception as e:
+        if plc_path.exists():
+            plc_df = pd.read_excel(plc_path, engine="openpyxl")
+            plc_norm = plc_df.copy()
+            plc_norm.columns = [c.strip() for c in plc_norm.columns]
+            plc_norm["ICP code_norm"] = plc_norm["ICP code"].astype(str).str.strip().str.upper()
+            plc_norm["Company name"] = plc_norm["Company name"].astype(str).str.strip()
+            plc_norm["Accountant"] = plc_norm["Accountant"].astype(str).str.strip()
+            plc_norm["Controller"] = plc_norm["Controller"].astype(str).str.strip()
+    except Exception:
         plc_norm = None
 
     # Add PLC cards for selected ICP(s)
@@ -485,8 +540,8 @@ def finalize_and_save(trial_balance, entries, map_dir, ICP,
         ws_front.cell(row_ptr, 2, icp_key)
 
         ws_front.cell(row_ptr + 1, 1, "Company name").font = Font(bold=True)
-        ws_front.cell(row_ptr + 2, 1, "Accountant").font   = Font(bold=True)
-        ws_front.cell(row_ptr + 3, 1, "Controller").font   = Font(bold=True)
+        ws_front.cell(row_ptr + 2, 1, "Accountant").font = Font(bold=True)
+        ws_front.cell(row_ptr + 3, 1, "Controller").font = Font(bold=True)
 
         if not row.empty:
             ws_front.cell(row_ptr + 1, 2, row.iloc[0]["Company name"])
@@ -497,30 +552,30 @@ def finalize_and_save(trial_balance, entries, map_dir, ICP,
             ws_front.cell(row_ptr + 2, 2, "—")
             ws_front.cell(row_ptr + 3, 2, "—")
 
-        apply_borders(ws_front, top=row_ptr, bottom=row_ptr+3, left=1, right=2)
+        apply_borders(ws_front, top=row_ptr, bottom=row_ptr + 3, left=1, right=2)
         row_ptr += 6
 
     row_ptr += 1
     ws_front.cell(row_ptr, 1, "Automatically generated comments:").font = Font(bold=True, underline="single")
     row_ptr += 2
 
-    # Build quick checks (same as earlier logic)
+    # Quick checks for frontpage comments
     comments = []
     mask_200_399 = (
-        trial_balance["No."].astype(str).str.isdigit() &
-        trial_balance["No."].astype(int).between(200000, 399999)
+        trial_balance_df["No."].astype(str).str.isdigit() &
+        trial_balance_df["No."].astype(int).between(200000, 399999)
     )
-    negatives = trial_balance.loc[
-        mask_200_399 & (trial_balance["Balance at Date"] < 0),
+    negatives = trial_balance_df.loc[
+        mask_200_399 & (trial_balance_df["Balance at Date"] < 0),
         ["No.", "Name", "Balance at Date"]
     ]
 
     mask_400_plus = (
-        trial_balance["No."].astype(str).str.isdigit() &
-        (trial_balance["No."].astype(int) >= 400000)
+        trial_balance_df["No."].astype(str).str.isdigit() &
+        (trial_balance_df["No."].astype(int) >= 400000)
     )
-    positives = trial_balance.loc[
-        mask_400_plus & (trial_balance["Balance at Date"] > 0),
+    positives = trial_balance_df.loc[
+        mask_400_plus & (trial_balance_df["Balance at Date"] > 0),
         ["No.", "Name", "Balance at Date"]
     ]
 
@@ -528,24 +583,25 @@ def finalize_and_save(trial_balance, entries, map_dir, ICP,
         comments.append(f"{len(negatives)} account(s) in the 200000–399999 range have negative balances.")
     if not positives.empty:
         comments.append(f"{len(positives)} account(s) in the 400000+ range have positive balances.")
+    if mismatch_accounts:
+        comments.append(f"{len(mismatch_accounts)} account(s) have entry totals that do not match the trial balance.")
 
-    if 'sheet_status' in locals():
-        mismatched_sheets = sum(v['mismatches'] for v in sheet_status.values())
-        if mismatched_sheets > 0:
-            comments.append(f"{mismatched_sheets} sheet(s) contain out-of-balance accounts exceeding tolerance {tolerance}.")
-        else:
-            comments.append("All sheets appear balanced within tolerance limits.")
+    mismatched_sheets = sum(v['mismatches'] for v in sheet_status.values()) if sheet_status else 0
+    if mismatched_sheets > 0:
+        comments.append(f"{mismatched_sheets} sheet(s) contain out-of-balance accounts exceeding tolerance {tolerance}.")
+    else:
+        comments.append("All sheets appear balanced within tolerance limits.")
 
     if not comments:
         comments.append("No issues detected based on configured checks.")
 
-    # Write comments
+    # Write bullet comments
     start_row = row_ptr
     for i, comment in enumerate(comments, start=start_row):
         ws_front.cell(i, 1, f"• {comment}")
     row_ptr = start_row + len(comments) + 2
 
-    # Helper to set hyperlinks to account anchors
+    # Detailed lists with hyperlinks to anchors (internal)
     def set_hyperlink(cell, acc_no):
         acc = str(acc_no)
         if acc in account_anchor:
@@ -554,7 +610,36 @@ def finalize_and_save(trial_balance, entries, map_dir, ICP,
             cell.hyperlink = f"#{sheet_ref}!A{anchor_row}"
             cell.style = "Hyperlink"
 
-    # Detailed lists
+    # 1) Accounts out of balance (TB vs entries) – FIRST
+    if mismatch_accounts:
+        ws_front.cell(row_ptr, 1, "Accounts out of balance (TB vs entries):").font = Font(bold=True)
+        row_ptr += 1
+
+        headers = ["Account", "Name", "TB balance", "Entries sum", "Difference"]
+        for col_idx, h in enumerate(headers, start=1):
+            cell = ws_front.cell(row_ptr, col_idx, h)
+            cell.font = Font(bold=True)
+        row_ptr += 1
+
+        for m in mismatch_accounts:
+            acc = str(m["No"])
+            c = ws_front.cell(row_ptr, 1, acc)
+            set_hyperlink(c, acc)
+            ws_front.cell(row_ptr, 2, m.get("Name", ""))
+
+            tb_cell = ws_front.cell(row_ptr, 3, m.get("tb_balance", 0.0))
+            ent_cell = ws_front.cell(row_ptr, 4, m.get("entries_sum", 0.0))
+            diff_cell = ws_front.cell(row_ptr, 5, m.get("difference", 0.0))
+
+            tb_cell.number_format = "#,##0.00"
+            ent_cell.number_format = "#,##0.00"
+            diff_cell.number_format = "#,##0.00"
+
+            row_ptr += 1
+
+        row_ptr += 1  # spacing
+
+    # 2) Negative balances
     if not negatives.empty:
         ws_front.cell(row_ptr, 1, "Negative balances (200000–399999):").font = Font(bold=True)
         row_ptr += 1
@@ -567,6 +652,7 @@ def finalize_and_save(trial_balance, entries, map_dir, ICP,
             val_cell.number_format = "#,##0.00"
             row_ptr += 1
 
+    # 3) Positive balances
     if not positives.empty:
         ws_front.cell(row_ptr, 1, "Positive balances (400000+):").font = Font(bold=True)
         row_ptr += 1
@@ -578,128 +664,233 @@ def finalize_and_save(trial_balance, entries, map_dir, ICP,
             val_cell = ws_front.cell(row_ptr, 3, r["Balance at Date"])
             val_cell.number_format = "#,##0.00"
             row_ptr += 1
+  
+    # === Documentation checklist (account-based comments) ===
+    doc_rules = [
+        # Tangible fixed assets
+        (
+            [
+                (142110, 142120),
+                (142210, 142220),
+                (143110, 143120),
+                (144110, 144120),
+            ],
+            "Add documentation for Depreciation fixed assets",
+        ),
+        # Long-term receivables
+        (
+            [
+                (234110, 234120),
+            ],
+            "Add documentation for Long-term receivables",
+        ),
+        # Trade receivables
+        (
+            [
+                (311000, 311020),
+            ],
+            "Add documentation for Trade receivables",
+        ),
+        # Amounts owed by affiliate companies
+        (
+            [
+                (321000, 321100),
+            ],
+            "Add documentation for Amounts owed by affiliate companies",
+        ),
+        # Bank account
+        (
+            [
+                (391010, 391070),
+                (393005, 393998),
+            ],
+            "Add documentation for Bank account",
+        ),
+        # Other Liabilities
+        (
+            [
+                (634010, 634011),
+            ],
+            "Add documentation for Other I/C Loans",
+        ),
+        # Trade payables
+        (
+            [
+                (721000, 721001),
+            ],
+            "Add documentation for Trade payables",
+        ),
+        # Amounts owed to affiliated companies
+        (
+            [
+                (731000, 731100),
+            ],
+            "Add documentation for Amounts owed to affiliated companies",
+        ),
+    ]
+
+    def _in_any_range(acc_int, ranges):
+        return any(lo <= acc_int <= hi for lo, hi in ranges)
+
+    # Build list of documentation items based on TB balances
+    doc_items = []
+    for _, r in trial_balance_df.iterrows():
+        acc_str = str(r["No."])
+        if not acc_str.isdigit():
+            continue
+
+        acc_int = int(acc_str)
+        bal = r.get("Balance at Date", 0.0) or 0.0
+        if abs(bal) <= tolerance:
+            continue  # no balance -> no documentation needed
+
+        for ranges, message in doc_rules:
+            if _in_any_range(acc_int, ranges):
+                doc_items.append(
+                    {
+                        "No": acc_str,
+                        "Name": r.get("Name", ""),
+                        "Message": message,
+                    }
+                )
+                break  # stop at first matching rule
+
+    if doc_items:
+        row_ptr += 2
+        ws_front.cell(row_ptr, 1, "Documentation checklist:").font = Font(
+            bold=True, underline="single"
+        )
+        row_ptr += 1
+
+        # Header row
+        headers = ["Account", "Name", "Comment", "Status"]
+        for col_idx, h in enumerate(headers, start=1):
+            cell = ws_front.cell(row_ptr, col_idx, h)
+            cell.font = Font(bold=True)
+        row_ptr += 1
+
+        # Dropdown for "Done"
+        dv = DataValidation(type="list", formula1='"Done"', allow_blank=True)
+        ws_front.add_data_validation(dv)
+
+        for item in doc_items:
+            acc = item["No"]
+            name = item["Name"]
+            msg = item["Message"]
+
+            # Account with hyperlink
+            acc_cell = ws_front.cell(row_ptr, 1, acc)
+            set_hyperlink(acc_cell, acc)
+
+            # Name + comment
+            ws_front.cell(row_ptr, 2, name)
+            ws_front.cell(row_ptr, 3, msg)
+
+            # Status dropdown
+            status_cell = ws_front.cell(row_ptr, 4)
+            dv.add(status_cell)
+
+            # Conditional formatting: if Status == "Done", make the row green
+            formula = f'$D{row_ptr}="Done"'
+            rule = FormulaRule(formula=[formula], fill=green_fill)
+            ws_front.conditional_formatting.add(f"A{row_ptr}:D{row_ptr}", rule)
+
+            row_ptr += 1
 
     # Footer metadata
     row_ptr += 2
     ws_front.cell(row_ptr, 1, f"Generated on: {pd.Timestamp.now():%Y-%m-%d %H:%M}")
     ws_front.cell(row_ptr + 1, 1, f"Tolerance used: {tolerance}")
-    ws_front.cell(row_ptr + 2, 1, f"Source files located in: {folder}")
+    ws_front.cell(row_ptr + 2, 1, f"Source files expected in: {STATIC_DIR}")
 
-    # 3) FORMAT numeric cells (comma thousands) and dates across all sheets
+    # === FORMAT numbers & dates across all sheets ===
     amount_fmt = "#,##0.00"
     date_fmt = "yyyy-mm-dd"
+
     for ws in wb.worksheets:
-        # apply number formats to cells that look like amounts or dates
+        # Hide gridlines
+        ws.sheet_view.showGridLines = False
+
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value is None:
                     continue
-                # Date-like (we stored Posting Date as datetime.date earlier)
-                if isinstance(cell.value, (pd.Timestamp,)) or (hasattr(cell.value, "year") and isinstance(cell.value, (int,)) is False and getattr(cell.value, "isoformat", None)):
-                    # Try to coerce to date string if it's pandas Timestamp or date-like
+                # Dates: if cell contains a date or pandas Timestamp
+                if isinstance(cell.value, (pd.Timestamp,)) or hasattr(cell.value, "year") and not isinstance(cell.value, (int, float, str)):
+                    # apply date format
                     try:
-                        # If it's a date object, set date format
-                        if isinstance(cell.value, (pd.Timestamp,)) or getattr(cell.value, "isoformat", None):
-                            # Only set format if cell contains a date object
-                            try:
-                                pd.to_datetime(cell.value)
-                                cell.number_format = date_fmt
-                            except:
-                                pass
+                        pd.to_datetime(cell.value)
+                        cell.number_format = date_fmt
                     except Exception:
                         pass
-                # Numbers: use amount format for columns named "Amount" or values that are numeric
+                # Numeric formatting: numeric types -> amount format
                 if isinstance(cell.value, (int, float)):
-                    # Heuristic: columns with "Amount" in header or numeric cell in last column
                     cell.number_format = amount_fmt
 
-    # 4) Auto-fit columns & hide gridlines
+    # Auto-fit columns
     for ws in wb.worksheets:
-        ws.sheet_view.showGridLines = False
         for col in ws.columns:
             max_len = max((len(str(c.value)) if c.value else 0 for c in col), default=0)
             ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max_len + 2
 
-    # 5) SAVE workbook (safe fallback if file locked)
-    out_path = Path(output_path)
-    try:
-        wb.save(out_path)
-        saved_path = out_path
-    except PermissionError:
-        alt = out_path.with_name(f"{out_path.stem}_{int(time.time())}{out_path.suffix}")
-        wb.save(alt)
-        saved_path = alt
+    # Save workbook to bytes buffer
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio
 
-    # 6) Color sheet tabs via xlwings (keeps preceding logic intact)
-    try:
-        app = xw.App(visible=False)
-        wbx = app.books.open(str(saved_path))
-        GREEN = (0, 176, 80)
-        RED = (255, 0, 0)
-        GREY = (191, 191, 191)
 
-        def rgb_to_bgr_int(rgb):
-            r, g, b = rgb
-            return r + (g << 8) + (b << 16)
-
-        for sh in wbx.sheets:
-            if sh.name == "Trial Balance (YTD)":
-                sh.api.Tab.Color = rgb_to_bgr_int(GREY)
-                continue
-            stat = sheet_status.get(sh.name, None)
-            if not stat or stat["accounts"] == 0:
-                color = GREY
-            elif stat["mismatches"] == 0:
-                color = GREEN
-            else:
-                color = RED
-            sh.api.Tab.Color = rgb_to_bgr_int(color)
-
-        wbx.save()
-        wbx.close()
-        app.quit()
-    except Exception as e:
-        # If xlwings fails (no Windows COM environment), we still have the XLSX saved.
-        print("⚠️ Could not color sheet tabs with xlwings (not fatal):", e)
-
-    print(f"✅ Workbook created successfully:\n{saved_path}")
-    return str(saved_path)
-
-# (END OF finalize_and_save FUNCTION)
-
-# -----------------------------------------------------
-# STREAMLIT WRAPPER — runs the generator and returns BytesIO
-# -----------------------------------------------------
-def generate_reconciliation_file(trial_balance_file, entries_file, icp_code):
+# === PUBLIC: generate_reconciliation_file ===
+def generate_reconciliation_file(trial_balance_file, entries_file, icp_code, mapping_path=None, plc_path=None, tolerance=TOLERANCE):
     """
-    Streamlit-compatible wrapper that:
-    - reads uploaded files (BytesIO)
-    - runs your full logic (build_workbook + finalize_and_save)
-    - returns an XLSX as BytesIO for download
+    Main entrypoint for Streamlit app.
+    Inputs trial_balance_file and entries_file may be:
+      - file-like objects (UploadedFile)
+      - pathlib.Path or str paths
+
+    Returns:
+      - BytesIO (seeked to 0) containing the generated workbook .xlsx
     """
+    # Load mapping from static (app-internal) unless explicit path provided
+    mapping_path = Path(mapping_path) if mapping_path else DEFAULT_MAPPING
+    plc_path = Path(plc_path) if plc_path else DEFAULT_PLC
 
-    # 1) Load internal mapping & plc (already loaded in memory by Streamlit)
-    mapping_accounts_df, mapping_dir_df = load_internal_mapping()
-    plc_df = load_internal_plc()
+    # Read user inputs (pandas handles file-like objects)
+    trial_balance = pd.read_excel(trial_balance_file)
+    entries = pd.read_excel(entries_file)
 
-    # 2) Read uploaded files into DataFrames
-    trial_balance_df = pd.read_excel(trial_balance_file)
-    entries_df = pd.read_excel(entries_file)
+    # Load mapping tables
+    acct_to_code, code_to_meta, map_dir = load_mapping(mapping_path)
 
-    # 3) Build workbook (EXACT SAME LOGIC AS BEFORE)
-    #    Instead of saving to disk, we save to BytesIO
-    wb, sheet_status, account_anchor = build_workbook(
-        trial_balance_df,
-        entries_df,
-        mapping_dir_df,
-        icp_code
+    # Apply mapping to trial balance
+    trial_balance = apply_mapping(trial_balance, acct_to_code, code_to_meta)
+
+    # Normalise entries column names
+    entries.rename(columns=lambda c: "Amount (LCY)" if str(c).strip().lower() in ["amount", "amount (lcy)"] else c, inplace=True)
+    entries.rename(columns=lambda c: "ICP CODE" if str(c).strip().lower() == "icp code" else c, inplace=True)
+
+    # Cast types & normalize
+    trial_balance["Balance at Date"] = trial_balance["Balance at Date"].apply(to_float)
+    entries["G/L Account No."] = entries["G/L Account No."].apply(normalize_account)
+    entries["Amount (LCY)"] = entries["Amount (LCY)"].apply(to_float)
+    # Remove timestamps: keep date only (pandas -> datetime.date)
+    entries["Posting Date"] = pd.to_datetime(entries["Posting Date"], errors="coerce").dt.date
+
+    # Build workbook
+    wb, sheet_status, account_anchor, mismatch_accounts = build_workbook(
+        trial_balance, entries, map_dir, acct_to_code, code_to_meta, icp_code, tolerance=tolerance
     )
 
-    # 4) Create BytesIO and save workbook into memory
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-
-    return output
-
-
+    # Finalize & get bytes
+    bio = finalize_workbook_to_bytes(
+        wb,
+        sheet_status,
+        account_anchor,
+        trial_balance,
+        entries,
+        icp_code,
+        plc_path=plc_path,
+        tolerance=tolerance,
+        mismatch_accounts=mismatch_accounts,
+    )
+    return bio
