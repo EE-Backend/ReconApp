@@ -497,6 +497,7 @@ def finalize_workbook_to_bytes(
     trial_balance_df,
     entries_df,
     ICP,
+    quarter_year,
     plc_path=None,
     tolerance=TOLERANCE,
     mismatch_accounts=None,
@@ -527,6 +528,9 @@ def finalize_workbook_to_bytes(
             plc_norm["Company name"] = plc_norm["Company name"].astype(str).str.strip()
             plc_norm["Accountant"] = plc_norm["Accountant"].astype(str).str.strip()
             plc_norm["Controller"] = plc_norm["Controller"].astype(str).str.strip()
+            ws_front.cell(row_ptr + 4, 1, "Quarter & Year").font = Font(bold=True)
+            ws_front.cell(row_ptr + 4, 2, quarter_year)
+
     except Exception:
         plc_norm = None
 
@@ -552,8 +556,8 @@ def finalize_workbook_to_bytes(
             ws_front.cell(row_ptr + 2, 2, "—")
             ws_front.cell(row_ptr + 3, 2, "—")
 
-        apply_borders(ws_front, top=row_ptr, bottom=row_ptr + 3, left=1, right=2)
-        row_ptr += 6
+        apply_borders(ws_front, top=row_ptr, bottom=row_ptr + 4, left=1, right=2)
+        row_ptr += 7
 
     row_ptr += 1
     ws_front.cell(row_ptr, 1, "Automatically generated comments:").font = Font(bold=True, underline="single")
@@ -841,7 +845,15 @@ def finalize_workbook_to_bytes(
 
 
 # === PUBLIC: generate_reconciliation_file ===
-def generate_reconciliation_file(trial_balance_file, entries_file, icp_code, mapping_path=None, plc_path=None, tolerance=TOLERANCE):
+def generate_reconciliation_file(
+    trial_balance_file,
+    entries_file,
+    icp_code,
+    quarter_year,
+    mapping_path=None,
+    plc_path=None,
+    tolerance=TOLERANCE
+):
     """
     Main entrypoint for Streamlit app.
     Inputs trial_balance_file and entries_file may be:
@@ -883,14 +895,17 @@ def generate_reconciliation_file(trial_balance_file, entries_file, icp_code, map
 
     # Finalize & get bytes
     bio = finalize_workbook_to_bytes(
-        wb,
-        sheet_status,
-        account_anchor,
-        trial_balance,
-        entries,
-        icp_code,
-        plc_path=plc_path,
-        tolerance=tolerance,
-        mismatch_accounts=mismatch_accounts,
-    )
+    wb,
+    sheet_status,
+    account_anchor,
+    trial_balance,
+    entries,
+    icp_code,
+    quarter_year,
+    plc_path=plc_path,
+    tolerance=tolerance,
+    mismatch_accounts=mismatch_accounts,
+    bio.name = f"Recon File {icp_code} {quarter_year}.xlsx"
+
+)
     return bio
