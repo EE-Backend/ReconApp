@@ -489,27 +489,25 @@ def build_workbook(trial_balance_df, entries_df, map_dir, acct_to_code, code_to_
     return wb, sheet_status, account_anchor, mismatch_accounts
 
 
-            # === FINALIZE: front page, formatting, save to bytes ===
-            def finalize_workbook_to_bytes(
-                wb,
-                sheet_status,
-                account_anchor,
-                trial_balance_df,
-                entries_df,
-                ICP,
-                plc_path=None,
-                tolerance=TOLERANCE,
-                mismatch_accounts=None,
-            ):
-                """
-                Adds front page, number/date formatting, hides gridlines, autofit, and returns bytes buffer.
-                """
-                if mismatch_accounts is None:
-                    mismatch_accounts = []
-            
-                   # ============================================================
-    # FRONT PAGE (FULL FORMATTED VERSION)
-    # ============================================================
+# === FINALIZE: front page, formatting, save to bytes ===
+def finalize_workbook_to_bytes(
+    wb,
+    sheet_status,
+    account_anchor,
+    trial_balance_df,
+    entries_df,
+    ICP,
+    plc_path=None,
+    tolerance=TOLERANCE,
+    mismatch_accounts=None,
+):
+    """
+    Adds front page, number/date formatting, hides gridlines, autofit, and returns bytes buffer.
+    """
+    if mismatch_accounts is None:
+        mismatch_accounts = []
+
+    # FRONT PAGE
     from warnings import filterwarnings
     filterwarnings("ignore", message="Data Validation extension is not supported and will be removed")
 
@@ -517,22 +515,7 @@ def build_workbook(trial_balance_df, entries_df, map_dir, acct_to_code, code_to_
     ws_front["A1"] = "EE Reconciliation Overview"
     ws_front["A1"].font = Font(size=16, bold=True)
 
-    # =========================================
-    # COLOR DEFINITIONS
-    # =========================================
-    plc_fill = PatternFill("solid", fgColor="9AD29F")       # PLC green
-    comment_header_fill = PatternFill("solid", fgColor="F8CBAD")
-    comment_body_fill = PatternFill("solid", fgColor="FCE4D6")
-
-    red_header_fill = PatternFill("solid", fgColor="EB3D3D")
-    red_body_fill = PatternFill("solid", fgColor="FF7979")
-
-    section_header_fill = PatternFill("solid", fgColor="F8CBAD")
-    section_body_fill = PatternFill("solid", fgColor="FCE4D6")
-
-    # ============================================================
-    # LOAD PLC INFO
-    # ============================================================
+    # PLC (optional)
     plc_norm = None
     plc_path = Path(plc_path) if plc_path else DEFAULT_PLC
     try:
@@ -541,79 +524,59 @@ def build_workbook(trial_balance_df, entries_df, map_dir, acct_to_code, code_to_
             plc_norm = plc_df.copy()
             plc_norm.columns = [c.strip() for c in plc_norm.columns]
             plc_norm["ICP code_norm"] = plc_norm["ICP code"].astype(str).str.strip().str.upper()
-    except:
+            plc_norm["Company name"] = plc_norm["Company name"].astype(str).str.strip()
+            plc_norm["Accountant"] = plc_norm["Accountant"].astype(str).str.strip()
+            plc_norm["Controller"] = plc_norm["Controller"].astype(str).str.strip()
+    except Exception:
         plc_norm = None
 
-    # ============================================================
-    # PLC BOX (GREEN SECTION)
-    # ============================================================
+    # Add PLC cards for selected ICP(s)
+    selected_icps = [ICP]
     row_ptr = 3
-    icp = str(ICP).strip().upper()
+    for icp in selected_icps:
+        icp_key = str(icp).strip().upper()
+        row = plc_norm.loc[plc_norm["ICP code_norm"] == icp_key] if plc_norm is not None else pd.DataFrame()
+        ws_front.cell(row_ptr, 1, "ICP code").font = Font(bold=True)
+        ws_front.cell(row_ptr, 2, icp_key)
 
-    ws_front.cell(row_ptr, 1, "ICP code").font = Font(bold=True)
-    ws_front.cell(row_ptr, 2, icp)
+        ws_front.cell(row_ptr + 1, 1, "Company name").font = Font(bold=True)
+        ws_front.cell(row_ptr + 2, 1, "Accountant").font = Font(bold=True)
+        ws_front.cell(row_ptr + 3, 1, "Controller").font = Font(bold=True)
 
-    ws_front.cell(row_ptr+1, 1, "Company name").font = Font(bold=True)
-    ws_front.cell(row_ptr+2, 1, "Accountant").font = Font(bold=True)
-    ws_front.cell(row_ptr+3, 1, "Controller").font = Font(bold=True)
-    ws_front.cell(row_ptr+4, 1, "Quarter & Year").font = Font(bold=True)
-    ws_front.cell(row_ptr+4, 2, quarter_year)
+        if not row.empty:
+            ws_front.cell(row_ptr + 1, 2, row.iloc[0]["Company name"])
+            ws_front.cell(row_ptr + 2, 2, row.iloc[0]["Accountant"])
+            ws_front.cell(row_ptr + 3, 2, row.iloc[0]["Controller"])
+        else:
+            ws_front.cell(row_ptr + 1, 2, "Not found in PLC.xlsx")
+            ws_front.cell(row_ptr + 2, 2, "—")
+            ws_front.cell(row_ptr + 3, 2, "—")
 
-    # Fill values from PLC
-    if plc_norm is not None and not plc_norm.loc[plc_norm["ICP code_norm"] == icp].empty:
-        row = plc_norm.loc[plc_norm["ICP code_norm"] == icp].iloc[0]
-        ws_front.cell(row_ptr+1, 2, row["Company name"])
-        ws_front.cell(row_ptr+2, 2, row["Accountant"])
-        ws_front.cell(row_ptr+3, 2, row["Controller"])
-    else:
-        ws_front.cell(row_ptr+1, 2, "Not found in PLC.xlsx")
-        ws_front.cell(row_ptr+2, 2, "—")
-        ws_front.cell(row_ptr+3, 2, "—")
+        apply_borders(ws_front, top=row_ptr, bottom=row_ptr + 3, left=1, right=2)
+        row_ptr += 6
 
-    # Apply green fill
-    for r in range(row_ptr, row_ptr + 5):
-        for c in range(1, 3):
-            ws_front.cell(r, c).fill = plc_fill
+    row_ptr += 1
+    ws_front.cell(row_ptr, 1, "Automatically generated comments:").font = Font(bold=True, underline="single")
+    row_ptr += 2
 
-    apply_borders(ws_front, row_ptr, row_ptr+4, 1, 2)
-
-    # Add logo to the right side
-    try:
-        logo_path = STATIC_DIR / "logo.png"
-        if logo_path.exists():
-            img = openpyxl.drawing.image.Image(str(logo_path))
-            img.width = 180
-            img.height = 180
-            ws_front.add_image(img, "E3")
-    except:
-        pass
-
-    row_ptr += 7
-
-    # ============================================================
-    # COMMENT BOX
-    # ============================================================
-    ws_front.cell(row_ptr, 1, "Automatically generated comments:").font = Font(bold=True)
-    ws_front.cell(row_ptr, 1).fill = comment_header_fill
-
+    # Quick checks for frontpage comments
     comments = []
-
-    # NEGATIVE accounts
-    mask_neg = (
+    mask_200_399 = (
         trial_balance_df["No."].astype(str).str.isdigit() &
         trial_balance_df["No."].astype(int).between(200000, 399999)
     )
     negatives = trial_balance_df.loc[
-        mask_neg & (trial_balance_df["Balance at Date"] < 0)
+        mask_200_399 & (trial_balance_df["Balance at Date"] < 0),
+        ["No.", "Name", "Balance at Date"]
     ]
 
-    # POSITIVE accounts
-    mask_pos = (
+    mask_400_plus = (
         trial_balance_df["No."].astype(str).str.isdigit() &
         (trial_balance_df["No."].astype(int) >= 400000)
     )
     positives = trial_balance_df.loc[
-        mask_pos & (trial_balance_df["Balance at Date"] > 0)
+        mask_400_plus & (trial_balance_df["Balance at Date"] > 0),
+        ["No.", "Name", "Balance at Date"]
     ]
 
     if not negatives.empty:
@@ -621,139 +584,224 @@ def build_workbook(trial_balance_df, entries_df, map_dir, acct_to_code, code_to_
     if not positives.empty:
         comments.append(f"{len(positives)} account(s) in the 400000+ range have positive balances.")
     if mismatch_accounts:
-        comments.append(f"{len(mismatch_accounts)} account(s) are out of balance vs TB.")
+        comments.append(f"{len(mismatch_accounts)} account(s) have entry totals that do not match the trial balance.")
 
-    sheet_mismatches = sum(v["mismatches"] for v in sheet_status.values())
-    if sheet_mismatches > 0:
-        comments.append(f"{sheet_mismatches} sheet(s) contain out-of-balance accounts.")
+    mismatched_sheets = sum(v['mismatches'] for v in sheet_status.values()) if sheet_status else 0
+    if mismatched_sheets > 0:
+        comments.append(f"{mismatched_sheets} sheet(s) contain out-of-balance accounts exceeding tolerance {tolerance}.")
+    else:
+        comments.append("All sheets appear balanced within tolerance limits.")
+
     if not comments:
-        comments.append("No issues detected.")
+        comments.append("No issues detected based on configured checks.")
 
-    start_comment_row = row_ptr + 1
-    for i, text in enumerate(comments):
-        ws_front.cell(start_comment_row + i, 1, f"• {text}")
-        ws_front.cell(start_comment_row + i, 1).fill = comment_body_fill
+    # Write bullet comments
+    start_row = row_ptr
+    for i, comment in enumerate(comments, start=start_row):
+        ws_front.cell(i, 1, f"• {comment}")
+    row_ptr = start_row + len(comments) + 2
 
-    apply_borders(ws_front, row_ptr, start_comment_row + len(comments) - 1, 1, 3)
+    # Detailed lists with hyperlinks to anchors (internal)
+    def set_hyperlink(cell, acc_no):
+        acc = str(acc_no)
+        if acc in account_anchor:
+            sheet_name, anchor_row = account_anchor[acc]
+            sheet_ref = f"'{sheet_name}'" if not sheet_name.isalnum() else sheet_name
+            cell.hyperlink = f"#{sheet_ref}!A{anchor_row}"
+            cell.style = "Hyperlink"
 
-    row_ptr = start_comment_row + len(comments) + 2
-
-    # ============================================================
-    # OUT OF BALANCE TABLE (RED)
-    # ============================================================
+    # 1) Accounts out of balance (TB vs entries) – FIRST
     if mismatch_accounts:
-        section_top = row_ptr
+        ws_front.cell(row_ptr, 1, "Accounts out of balance (TB vs entries):").font = Font(bold=True)
+        row_ptr += 1
 
         headers = ["Account", "Name", "TB balance", "Entries sum", "Difference"]
-        for col, title in enumerate(headers, 1):
-            cell = ws_front.cell(row_ptr, col, title)
+        for col_idx, h in enumerate(headers, start=1):
+            cell = ws_front.cell(row_ptr, col_idx, h)
             cell.font = Font(bold=True)
-            cell.fill = red_header_fill
-
         row_ptr += 1
 
         for m in mismatch_accounts:
-            values = [
-                m["No"], m["Name"],
-                m["tb_balance"], m["entries_sum"], m["difference"]
-            ]
-            for col, val in enumerate(values, 1):
-                cell = ws_front.cell(row_ptr, col, val)
-                cell.fill = red_body_fill
-                if col >= 3:
-                    cell.number_format = "#,##0.00"
+            acc = str(m["No"])
+            c = ws_front.cell(row_ptr, 1, acc)
+            set_hyperlink(c, acc)
+            ws_front.cell(row_ptr, 2, m.get("Name", ""))
+
+            tb_cell = ws_front.cell(row_ptr, 3, m.get("tb_balance", 0.0))
+            ent_cell = ws_front.cell(row_ptr, 4, m.get("entries_sum", 0.0))
+            diff_cell = ws_front.cell(row_ptr, 5, m.get("difference", 0.0))
+
+            tb_cell.number_format = "#,##0.00"
+            ent_cell.number_format = "#,##0.00"
+            diff_cell.number_format = "#,##0.00"
+
             row_ptr += 1
 
-        apply_borders(ws_front, section_top, row_ptr-1, 1, 5)
-        row_ptr += 2
+        row_ptr += 1  # spacing
 
-    # ============================================================
-    # NEGATIVE BALANCES (PEACH)
-    # ============================================================
+    # 2) Negative balances
     if not negatives.empty:
-        section_top = row_ptr
         ws_front.cell(row_ptr, 1, "Negative balances (200000–399999):").font = Font(bold=True)
-        ws_front.cell(row_ptr, 1).fill = section_header_fill
         row_ptr += 1
-
         for _, r in negatives.iterrows():
-            vals = [r["No."], r["Name"], r["Balance at Date"]]
-            for col, val in enumerate(vals, 1):
-                cell = ws_front.cell(row_ptr, col, val)
-                cell.fill = section_body_fill
-                if col == 3:
-                    cell.number_format = "#,##0.00"
+            acc = str(r["No."])
+            c = ws_front.cell(row_ptr, 1, acc)
+            set_hyperlink(c, acc)
+            ws_front.cell(row_ptr, 2, r.get("Name", ""))
+            val_cell = ws_front.cell(row_ptr, 3, r["Balance at Date"])
+            val_cell.number_format = "#,##0.00"
             row_ptr += 1
 
-        apply_borders(ws_front, section_top, row_ptr - 1, 1, 3)
-        row_ptr += 2
-
-    # ============================================================
-    # POSITIVE BALANCES (PEACH)
-    # ============================================================
+    # 3) Positive balances
     if not positives.empty:
-        section_top = row_ptr
         ws_front.cell(row_ptr, 1, "Positive balances (400000+):").font = Font(bold=True)
-        ws_front.cell(row_ptr, 1).fill = section_header_fill
         row_ptr += 1
-
         for _, r in positives.iterrows():
-            vals = [r["No."], r["Name"], r["Balance at Date"]]
-            for col, val in enumerate(vals, 1):
-                cell = ws_front.cell(row_ptr, col, val)
-                cell.fill = section_body_fill
-                if col == 3:
-                    cell.number_format = "#,##0.00"
+            acc = str(r["No."])
+            c = ws_front.cell(row_ptr, 1, acc)
+            set_hyperlink(c, acc)
+            ws_front.cell(row_ptr, 2, r.get("Name", ""))
+            val_cell = ws_front.cell(row_ptr, 3, r["Balance at Date"])
+            val_cell.number_format = "#,##0.00"
             row_ptr += 1
+  
+    # === Documentation checklist (account-based comments) ===
+    doc_rules = [
+        # Tangible fixed assets
+        (
+            [
+                (142110, 142120),
+                (142210, 142220),
+                (143110, 143120),
+                (144110, 144120),
+            ],
+            "Add documentation for Depreciation fixed assets",
+        ),
+        # Long-term receivables
+        (
+            [
+                (234110, 234120),
+            ],
+            "Add documentation for Long-term receivables",
+        ),
+        # Trade receivables
+        (
+            [
+                (311000, 311020),
+            ],
+            "Add documentation for Trade receivables",
+        ),
+        # Amounts owed by affiliate companies
+        (
+            [
+                (321000, 321100),
+            ],
+            "Add documentation for Amounts owed by affiliate companies",
+        ),
+        # Bank account
+        (
+            [
+                (391010, 391070),
+                (393005, 393998),
+            ],
+            "Add documentation for Bank account",
+        ),
+        # Other Liabilities
+        (
+            [
+                (634010, 634011),
+            ],
+            "Add documentation for Other I/C Loans",
+        ),
+        # Trade payables
+        (
+            [
+                (721000, 721001),
+            ],
+            "Add documentation for Trade payables",
+        ),
+        # Amounts owed to affiliated companies
+        (
+            [
+                (731000, 731100),
+            ],
+            "Add documentation for Amounts owed to affiliated companies",
+        ),
+    ]
 
-        apply_borders(ws_front, section_top, row_ptr - 1, 1, 3)
-        row_ptr += 2
+    def _in_any_range(acc_int, ranges):
+        return any(lo <= acc_int <= hi for lo, hi in ranges)
 
-    # ============================================================
-    # DOCUMENTATION CHECKLIST (PEACH)
-    # ============================================================
-    # Build doc_items (your existing rule logic stays as-is)
-    # ⚠ KEEP your existing code that builds doc_items
-    # Insert this formatting AFTER doc_items is built:
+    # Build list of documentation items based on TB balances
+    doc_items = []
+    for _, r in trial_balance_df.iterrows():
+        acc_str = str(r["No."])
+        if not acc_str.isdigit():
+            continue
+
+        acc_int = int(acc_str)
+        bal = r.get("Balance at Date", 0.0) or 0.0
+        if abs(bal) <= tolerance:
+            continue  # no balance -> no documentation needed
+
+        for ranges, message in doc_rules:
+            if _in_any_range(acc_int, ranges):
+                doc_items.append(
+                    {
+                        "No": acc_str,
+                        "Name": r.get("Name", ""),
+                        "Message": message,
+                    }
+                )
+                break  # stop at first matching rule
 
     if doc_items:
-        section_top = row_ptr
-
-        ws_front.cell(row_ptr, 1, "Documentation checklist:").font = Font(bold=True)
+        row_ptr += 2
+        ws_front.cell(row_ptr, 1, "Documentation checklist:").font = Font(
+            bold=True, underline="single"
+        )
         row_ptr += 1
 
+        # Header row
         headers = ["Account", "Name", "Comment", "Status"]
-        for col, title in enumerate(headers, 1):
-            cell = ws_front.cell(row_ptr, col, title)
+        for col_idx, h in enumerate(headers, start=1):
+            cell = ws_front.cell(row_ptr, col_idx, h)
             cell.font = Font(bold=True)
-            cell.fill = section_header_fill
-
         row_ptr += 1
 
+        # Dropdown for "Done"
         dv = DataValidation(type="list", formula1='"Done"', allow_blank=True)
         ws_front.add_data_validation(dv)
 
         for item in doc_items:
-            vals = [item["No"], item["Name"], item["Message"], ""]
-            for col, val in enumerate(vals, 1):
-                cell = ws_front.cell(row_ptr, col, val)
-                cell.fill = section_body_fill
+            acc = item["No"]
+            name = item["Name"]
+            msg = item["Message"]
 
-            dv.add(ws_front.cell(row_ptr, 4))
+            # Account with hyperlink
+            acc_cell = ws_front.cell(row_ptr, 1, acc)
+            set_hyperlink(acc_cell, acc)
+
+            # Name + comment
+            ws_front.cell(row_ptr, 2, name)
+            ws_front.cell(row_ptr, 3, msg)
+
+            # Status dropdown
+            status_cell = ws_front.cell(row_ptr, 4)
+            dv.add(status_cell)
+
+            # Conditional formatting: if Status == "Done", make the row green
+            formula = f'$D{row_ptr}="Done"'
+            rule = FormulaRule(formula=[formula], fill=green_fill)
+            ws_front.conditional_formatting.add(f"A{row_ptr}:D{row_ptr}", rule)
 
             row_ptr += 1
 
-        apply_borders(ws_front, section_top, row_ptr - 1, 1, 4)
-
-    # ============================================================
-    # FOOTER
-    # ============================================================
-    row_ptr += 1
+    # Footer metadata
+    row_ptr += 2
     ws_front.cell(row_ptr, 1, f"Generated on: {pd.Timestamp.now():%Y-%m-%d %H:%M}")
-    ws_front.cell(row_ptr+1, 1, f"Tolerance used: {tolerance}")
-    ws_front.cell(row_ptr+2, 1, f"Source files expected in: {STATIC_DIR}")
-
-
+    ws_front.cell(row_ptr + 1, 1, f"Tolerance used: {tolerance}")
+    ws_front.cell(row_ptr + 2, 1, f"Source files expected in: {STATIC_DIR}")
 
     # === FORMAT numbers & dates across all sheets ===
     amount_fmt = "#,##0.00"
