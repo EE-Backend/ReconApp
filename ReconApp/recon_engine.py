@@ -16,7 +16,7 @@ TOLERANCE = 0.001
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
 DEFAULT_MAPPING = STATIC_DIR / "mapping.xlsx"
-DEFAULT_PLC = STATIC_DIR / "PLC.xlsx"
+DEFAULT_PLC = STATIC_DIR / "PLC_data.xlsx"
 
 
 # === HELPERS ===
