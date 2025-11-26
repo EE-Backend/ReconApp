@@ -863,6 +863,30 @@ def generate_reconciliation_file(trial_balance_file, entries_file, icp_code, map
     # Read user inputs (pandas handles file-like objects)
     trial_balance = pd.read_excel(trial_balance_file)
     entries = pd.read_excel(entries_file)
+    
+    # ✅ Required columns for entries
+    required_cols = {"G/L Account No.", "Posting Date", "Amount", "Amount (LCY)", "ICP CODE", "GAAP Code"}
+    
+    missing = [col for col in ["G/L Account No.", "Posting Date"] if col not in entries.columns]
+    
+    # Special handling for Amount column (can be named either)
+    if not ("Amount" in entries.columns or "Amount (LCY)" in entries.columns):
+        missing.append("Amount (LCY)")
+    
+    if "ICP CODE" not in entries.columns:
+        missing.append("ICP CODE")
+    
+    if "GAAP Code" not in entries.columns:
+        missing.append("GAAP Code")
+    
+    # ✅ Stop early if anything is missing
+    if missing:
+        raise ValueError(
+            "The uploaded All Entries file is missing required column(s): "
+            + ", ".join(missing)
+            + "\n\nPlease upload a correct All Entries file and try again."
+        )
+
 
     # Load mapping tables
     acct_to_code, code_to_meta, map_dir = load_mapping(mapping_path)
