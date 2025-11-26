@@ -8,6 +8,9 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.formatting.rule import FormulaRule
 import openpyxl.utils
 import time
+from openpyxl.drawing.image import Image
+
+
 
 # === CONFIG / Defaults ===
 TOLERANCE = 0.001
@@ -634,6 +637,21 @@ def finalize_workbook_to_bytes(
             cell.hyperlink = f"#{sheet_ref}!A{anchor_row}"
             cell.style = "Hyperlink"
 
+    # --- Insert EE Logo ---
+    logo_path = STATIC_DIR / "logo.png"
+    if logo_path.exists():
+        try:
+            logo = Image(str(logo_path))
+            # Optional: scale it down a bit
+            logo.width = 140
+            logo.height = 140
+            # Position it
+            ws_front.add_image(logo, "B12")
+        except Exception as e:
+            pass  # Fail silently, logo is not critical
+
+
+    
     # === 1) ACCOUNTS OUT OF BALANCE (RED BLOCK) ===
     if mismatch_accounts:
         block_top = row_ptr
