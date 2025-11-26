@@ -594,16 +594,21 @@ def finalize_workbook_to_bytes(
         ["No.", "Name", "Balance at Date"]
     ]
 
-    # Unmapped accounts (sheet_group == "Unmapped")
-    if "sheet_group" in trial_balance_df.columns:
-        mask_unmapped = (
-            trial_balance_df["sheet_group"].astype(str).str.strip() == "Unmapped"
-        )
+    # Unmapped accounts = rows with no mapping code
+    if "code" in trial_balance_df.columns:
+        mask_unmapped = trial_balance_df["code"].isna()
+        unmapped_accounts = trial_balance_df.loc[
+            mask_unmapped, ["No.", "Name", "Balance at Date"]
+        ]
+    elif "sheet_group" in trial_balance_df.columns:
+        # Fallback: use sheet_group if code is not present
+        mask_unmapped = trial_balance_df["sheet_group"].astype(str).str.strip().eq("Unmapped")
         unmapped_accounts = trial_balance_df.loc[
             mask_unmapped, ["No.", "Name", "Balance at Date"]
         ]
     else:
         unmapped_accounts = pd.DataFrame(columns=["No.", "Name", "Balance at Date"])
+
 
 
     if not negatives.empty:
