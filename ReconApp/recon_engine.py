@@ -593,11 +593,17 @@ def finalize_workbook_to_bytes(
         mask_400_plus & (trial_balance_df["Balance at Date"] > 0),
         ["No.", "Name", "Balance at Date"]
     ]
-        # Unmapped accounts (sheet_group == "Unmapped")
-    unmapped_accounts = trial_balance_df.loc[
-        trial_balance_df.get("sheet_group", "").astype(str) == "Unmapped",
-        ["No.", "Name", "Balance at Date"]
-    ]
+
+    # Unmapped accounts (sheet_group == "Unmapped")
+    if "sheet_group" in trial_balance_df.columns:
+        mask_unmapped = (
+            trial_balance_df["sheet_group"].astype(str).str.strip() == "Unmapped"
+        )
+        unmapped_accounts = trial_balance_df.loc[
+            mask_unmapped, ["No.", "Name", "Balance at Date"]
+        ]
+    else:
+        unmapped_accounts = pd.DataFrame(columns=["No.", "Name", "Balance at Date"])
 
 
     if not negatives.empty:
@@ -606,6 +612,8 @@ def finalize_workbook_to_bytes(
         comments.append(f"{len(positives)} account(s) in the 400000+ range have positive balances.")
     if mismatch_accounts:
         comments.append(f"{len(mismatch_accounts)} account(s) have entry totals that do not match the trial balance.")
+    if not unmapped_accounts.empty:
+        comments.append(f"{len(unmapped_accounts)} account(s) are unmapped and need mapping.")
 
     mismatched_sheets = sum(v["mismatches"] for v in sheet_status.values()) if sheet_status else 0
     if mismatched_sheets > 0:
@@ -657,6 +665,7 @@ def finalize_workbook_to_bytes(
             cell.hyperlink = f"#{sheet_ref}!A{anchor_row}"
             cell.style = "Hyperlink"
     
+   
     # === 1) ACCOUNTS OUT OF BALANCE (RED BLOCK) ===
     if mismatch_accounts:
         block_top = row_ptr
@@ -694,9 +703,9 @@ def finalize_workbook_to_bytes(
 
         block_bottom = row_ptr - 1
         apply_borders(ws_front, top=block_top, bottom=block_bottom, left=1, right=5)
-        row_ptr += 1
+        row_ptr += 1  # spacing after block
 
-        # === 1b) UNMAPPED ACCOUNTS (RED BLOCK) ===
+    # === 1b) UNMAPPED ACCOUNTS (RED BLOCK) ===
     if not unmapped_accounts.empty:
         block_top = row_ptr
         title_cell = ws_front.cell(row_ptr, 1, "Unmapped accounts (no mapping code):")
@@ -719,7 +728,6 @@ def finalize_workbook_to_bytes(
             val_cell = ws_front.cell(row_ptr, 3, r["Balance at Date"])
             val_cell.number_format = "#,##0.00"
 
-            # colour entire row red (same as out-of-balance)
             for c in range(1, 4):
                 ws_front.cell(row_ptr, c).fill = red_fill
 
@@ -727,7 +735,7 @@ def finalize_workbook_to_bytes(
 
         block_bottom = row_ptr - 1
         apply_borders(ws_front, top=block_top, bottom=block_bottom, left=1, right=3)
-        row_ptr += 1
+        row_ptr += 1  # spacing after block
 
 
     # === 2) NEGATIVE BALANCES ===
