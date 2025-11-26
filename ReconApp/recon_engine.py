@@ -508,15 +508,15 @@ def finalize_workbook_to_bytes(
     if mismatch_accounts is None:
         mismatch_accounts = []
 
-    # FRONT PAGE
     from warnings import filterwarnings
     filterwarnings("ignore", message="Data Validation extension is not supported and will be removed")
 
+    # === FRONT PAGE SHEET ===
     ws_front = wb.create_sheet("Frontpage", 0)
     ws_front["A1"] = "EE Reconciliation Overview"
     ws_front["A1"].font = Font(size=16, bold=True)
 
-    # PLC (optional)
+    # === PLC CARD (ICP, Company, Accountant, Controller, Quarter) ===
     plc_norm = None
     plc_path = Path(plc_path) if plc_path else DEFAULT_PLC
     try:
@@ -531,10 +531,9 @@ def finalize_workbook_to_bytes(
     except Exception:
         plc_norm = None
 
-    # Add PLC cards for selected ICP(s)
-    
     selected_icps = [ICP]
     row_ptr = 3
+
     for icp in selected_icps:
         icp_key = str(icp).strip().upper()
         row = plc_norm.loc[plc_norm["ICP code_norm"] == icp_key] if plc_norm is not None else pd.DataFrame()
@@ -561,19 +560,19 @@ def finalize_workbook_to_bytes(
             ws_front.cell(row_ptr + 4, 2, str(quarter))
 
         # Colour PLC block
-        for r in range(row_ptr, row_ptr + 5):       # rows row_ptr .. row_ptr+4
-            for c in range(1, 3):                   # columns A:B
+        for r in range(row_ptr, row_ptr + 5):  # rows row_ptr..row_ptr+4
+            for c in range(1, 3):              # cols A:B
                 ws_front.cell(r, c).fill = plc_fill
 
         # Border around PLC + Quarter
         apply_borders(ws_front, top=row_ptr, bottom=row_ptr + 4, left=1, right=2)
 
-        row_ptr += 7   # leave a couple of blank rows after the block
+        row_ptr += 7  # blank rows after PLC card
 
-     row_ptr += 1
-
-    # Quick checks for frontpage comments
+    # === AUTOMATICALLY GENERATED COMMENTS BOX ===
+    # Quick checks
     comments = []
+
     mask_200_399 = (
         trial_balance_df["No."].astype(str).str.isdigit() &
         trial_balance_df["No."].astype(int).between(200000, 399999)
@@ -599,16 +598,15 @@ def finalize_workbook_to_bytes(
     if mismatch_accounts:
         comments.append(f"{len(mismatch_accounts)} account(s) have entry totals that do not match the trial balance.")
 
-    mismatched_sheets = sum(v['mismatches'] for v in sheet_status.values()) if sheet_status else 0
+    mismatched_sheets = sum(v["mismatches"] for v in sheet_status.values()) if sheet_status else 0
     if mismatched_sheets > 0:
-        comments.append(f"{mismatched_sheets} sheet(s) contain out-of-balance accounts exceeding tolerance {tolerance}.")
-    else:
-        comments.append("All sheets appear balanced within tolerance limits.")
+        comments.append(
+            f"{mismatched_sheets} sheet(s) contain out-of-balance accounts exceeding tolerance {tolerance}."
+        )
 
     if not comments:
-        comments.append("No issues detected based on configured checks.")
+        comments.append("All sheets appear balanced within tolerance limits.")
 
-    # Write bullet comments
     comments_top = row_ptr
     header_cell = ws_front.cell(row_ptr, 1, "Automatically generated comments:")
     header_cell.font = Font(bold=True, underline="single")
@@ -622,12 +620,12 @@ def finalize_workbook_to_bytes(
             ws_front.cell(i, c).fill = entry_fill
         ws_front.cell(i, 1, f"• {comment}")
     comments_bottom = start_row + len(comments) - 1
-# Border around the comments box (cols A:D)
+
     apply_borders(ws_front, top=comments_top, bottom=comments_bottom, left=1, right=4)
 
     row_ptr = comments_bottom + 2
 
-    # Detailed lists with hyperlinks to anchors (internal)
+    # === Helper for hyperlinks ===
     def set_hyperlink(cell, acc_no):
         acc = str(acc_no)
         if acc in account_anchor:
@@ -636,8 +634,7 @@ def finalize_workbook_to_bytes(
             cell.hyperlink = f"#{sheet_ref}!A{anchor_row}"
             cell.style = "Hyperlink"
 
-##
-   # 1) Accounts out of balance (TB vs entries) – FIRST
+    # === 1) ACCOUNTS OUT OF BALANCE (RED BLOCK) ===
     if mismatch_accounts:
         block_top = row_ptr
         title_cell = ws_front.cell(row_ptr, 1, "Accounts out of balance (TB vs entries):")
@@ -667,7 +664,6 @@ def finalize_workbook_to_bytes(
             ent_cell.number_format = "#,##0.00"
             diff_cell.number_format = "#,##0.00"
 
-            # colour entire row red (error emphasis)
             for c in range(1, 6):
                 ws_front.cell(row_ptr, c).fill = red_fill
 
@@ -675,15 +671,9 @@ def finalize_workbook_to_bytes(
 
         block_bottom = row_ptr - 1
         apply_borders(ws_front, top=block_top, bottom=block_bottom, left=1, right=5)
-        row_ptr += 1  # spacing
+        row_ptr += 1
 
-
-
-##
-
-
-
-    # 2) Negative balances
+    # === 2) NEGATIVE BALANCES ===
     if not negatives.empty:
         neg_top = row_ptr
         title_cell = ws_front.cell(row_ptr, 1, "Negative balances (200000–399999):")
@@ -707,8 +697,7 @@ def finalize_workbook_to_bytes(
         apply_borders(ws_front, top=neg_top, bottom=neg_bottom, left=1, right=3)
         row_ptr += 1
 
-
-    # 3) Positive balances
+    # === 3) POSITIVE BALANCES ===
     if not positives.empty:
         pos_top = row_ptr
         title_cell = ws_front.cell(row_ptr, 1, "Positive balances (400000+):")
@@ -731,106 +720,41 @@ def finalize_workbook_to_bytes(
         pos_bottom = row_ptr - 1
         apply_borders(ws_front, top=pos_top, bottom=pos_bottom, left=1, right=3)
 
-  
-    # === Documentation checklist (account-based comments) ===
+    # === 4) DOCUMENTATION CHECKLIST ===
     doc_rules = [
-        # Tangible fixed assets
-        (
-            [
-                (142110, 142120),
-                (142210, 142220),
-                (143110, 143120),
-                (144110, 144120),
-            ],
-            "Add documentation for Depreciation fixed assets",
-        ),
-        # Long-term receivables
-        (
-            [
-                (234110, 234120),
-            ],
-            "Add documentation for Long-term receivables",
-        ),
-        # Trade receivables
-        (
-            [
-                (311000, 311020),
-            ],
-            "Add documentation for Trade receivables",
-        ),
-        # Amounts owed by affiliate companies
-        (
-            [
-                (321000, 321100),
-            ],
-            "Add documentation for Amounts owed by affiliate companies",
-        ),
-        # Bank account
-        (
-            [
-                (391010, 391070),
-                (393005, 393998),
-            ],
-            "Add documentation for Bank account",
-        ),
-        # Other Liabilities
-        (
-            [
-                (634010, 634011),
-            ],
-            "Add documentation for Other I/C Loans",
-        ),
-        # Trade payables
-        (
-            [
-                (721000, 721001),
-            ],
-            "Add documentation for Trade payables",
-        ),
-        # Amounts owed to affiliated companies
-        (
-            [
-                (731000, 731100),
-            ],
-            "Add documentation for Amounts owed to affiliated companies",
-        ),
+        ([(142110, 142120), (142210, 142220), (143110, 143120), (144110, 144120)],
+         "Add documentation for Depreciation fixed assets"),
+        ([(234110, 234120)], "Add documentation for Long-term receivables"),
+        ([(311000, 311020)], "Add documentation for Trade receivables"),
+        ([(321000, 321100)], "Add documentation for Amounts owed by affiliate companies"),
+        ([(391010, 391070), (393005, 393998)], "Add documentation for Bank account"),
+        ([(634010, 634011)], "Add documentation for Other I/C Loans"),
+        ([(721000, 721001)], "Add documentation for Trade payables"),
+        ([(731000, 731100)], "Add documentation for Amounts owed to affiliated companies"),
     ]
 
     def _in_any_range(acc_int, ranges):
         return any(lo <= acc_int <= hi for lo, hi in ranges)
 
-    # Build list of documentation items based on TB balances
     doc_items = []
     for _, r in trial_balance_df.iterrows():
         acc_str = str(r["No."])
         if not acc_str.isdigit():
             continue
-
         acc_int = int(acc_str)
         bal = r.get("Balance at Date", 0.0) or 0.0
         if abs(bal) <= tolerance:
-            continue  # no balance -> no documentation needed
-
+            continue
         for ranges, message in doc_rules:
             if _in_any_range(acc_int, ranges):
-                doc_items.append(
-                    {
-                        "No": acc_str,
-                        "Name": r.get("Name", ""),
-                        "Message": message,
-                    }
-                )
-                break  # stop at first matching rule
+                doc_items.append({"No": acc_str, "Name": r.get("Name", ""), "Message": message})
+                break
 
     if doc_items:
         row_ptr += 2
-        ws_front.cell(row_ptr, 1, "Documentation checklist:").font = Font(
-            bold=True, underline="single"
-        )
+        ws_front.cell(row_ptr, 1, "Documentation checklist:").font = Font(bold=True, underline="single")
         row_ptr += 1
 
-        # Header row
-        # Header row
         headers = ["Account", "Name", "Comment", "Status"]
         doc_top = row_ptr
         for col_idx, h in enumerate(headers, start=1):
@@ -839,7 +763,6 @@ def finalize_workbook_to_bytes(
             cell.fill = header_fill
         row_ptr += 1
 
-        # Dropdown for "Done"
         dv = DataValidation(type="list", formula1='"Done"', allow_blank=True)
         ws_front.add_data_validation(dv)
 
@@ -848,17 +771,14 @@ def finalize_workbook_to_bytes(
             name = item["Name"]
             msg = item["Message"]
 
-            # Account with hyperlink
             acc_cell = ws_front.cell(row_ptr, 1, acc)
             set_hyperlink(acc_cell, acc)
-
             ws_front.cell(row_ptr, 2, name)
             ws_front.cell(row_ptr, 3, msg)
 
             status_cell = ws_front.cell(row_ptr, 4)
             dv.add(status_cell)
 
-            # base fill (will be overridden by CF when Done)
             for c in range(1, 5):
                 ws_front.cell(row_ptr, c).fill = entry_fill
 
@@ -871,34 +791,30 @@ def finalize_workbook_to_bytes(
         doc_bottom = row_ptr - 1
         apply_borders(ws_front, top=doc_top, bottom=doc_bottom, left=1, right=4)
 
-
-    # Footer metadata
+    # === FOOTER METADATA ===
     row_ptr += 2
     ws_front.cell(row_ptr, 1, f"Generated on: {pd.Timestamp.now():%Y-%m-%d %H:%M}")
     ws_front.cell(row_ptr + 1, 1, f"Tolerance used: {tolerance}")
     ws_front.cell(row_ptr + 2, 1, f"Source files expected in: {STATIC_DIR}")
 
-    # === FORMAT numbers & dates across all sheets ===
+    # === GLOBAL FORMATTING (all sheets) ===
     amount_fmt = "#,##0.00"
     date_fmt = "yyyy-mm-dd"
 
     for ws in wb.worksheets:
-        # Hide gridlines
         ws.sheet_view.showGridLines = False
-
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value is None:
                     continue
-                # Dates: if cell contains a date or pandas Timestamp
-                if isinstance(cell.value, (pd.Timestamp,)) or hasattr(cell.value, "year") and not isinstance(cell.value, (int, float, str)):
-                    # apply date format
+                if isinstance(cell.value, (pd.Timestamp,)) or (
+                    hasattr(cell.value, "year") and not isinstance(cell.value, (int, float, str))
+                ):
                     try:
                         pd.to_datetime(cell.value)
                         cell.number_format = date_fmt
                     except Exception:
                         pass
-                # Numeric formatting: numeric types -> amount format
                 if isinstance(cell.value, (int, float)):
                     cell.number_format = amount_fmt
 
@@ -908,11 +824,11 @@ def finalize_workbook_to_bytes(
             max_len = max((len(str(c.value)) if c.value else 0 for c in col), default=0)
             ws.column_dimensions[openpyxl.utils.get_column_letter(col[0].column)].width = max_len + 2
 
-    # Save workbook to bytes buffer
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
     return bio
+
 
 
 # === PUBLIC: generate_reconciliation_file ===
