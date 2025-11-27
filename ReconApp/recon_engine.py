@@ -233,13 +233,14 @@ def add_pl_balance_sheet(wb, trial_balance_df, code_to_meta):
         ("", "Total assets", None),
     ]
 
-    # NOTE: Total Profit row REMOVED from the Equity section per your request
+
     EQUITY_LIAB_LAYOUT = [
         ("", "Equity", None),
         ("20", "Share capital", "Equity"),
         ("21", "Retained earnings and reserves", "Equity"),
         ("22", "Hybrid Capital", "Equity"),
         ("23", "Minority interests", "Equity"),
+        ("TP_EQUITY", "Total profit", None),
         ("", "Total equity", None),
 
         ("", "Liabilities", None),
@@ -282,10 +283,10 @@ def add_pl_balance_sheet(wb, trial_balance_df, code_to_meta):
         row = start_row
         block_top = row
         prev_group = False
-
+    
         for code, desc, tab in layout:
             is_group = (code == "")
-
+    
             # Gap between consecutive header/total rows
             if prev_group and is_group:
                 for col in range(3, 6):
@@ -293,17 +294,43 @@ def add_pl_balance_sheet(wb, trial_balance_df, code_to_meta):
                     gap_cell.fill = entry_fill
                 row += 1
             prev_group = is_group
-
-            # Column B: group mapping
+    
+            # Column B: mapping code
             ws.cell(row, 2, code if code else "")
-
+    
             # Column C: description
             desc_cell = ws.cell(row, 3, desc)
-
-            # Column D: numeric / formula (initially empty for totals)
+    
+            # Column D: value (empty initially)
             val_cell = ws.cell(row, 4)
-
-            # Choose fill
+    
+            # === SPECIAL CASE: Total profit inside Equity section ===
+            if code == "TP_EQUITY":
+                # Bold text, entry-fill
+                desc_cell.font = Font(bold=True)
+                desc_cell.fill = entry_fill
+    
+                # Reference the main Total profit row in P&L
+                tp_main_row = desc_row["Total profit"]
+                val_cell = ws.cell(row, 4, f"=D{tp_main_row}")
+                val_cell.font = Font(bold=True)
+                val_cell.fill = entry_fill
+                val_cell.number_format = "#,##0.00"
+    
+                # No code / no hyperlink
+                ws.cell(row, 2, "")
+                tab_cell = ws.cell(row, 5, "")
+                tab_cell.fill = entry_fill
+    
+                # Track row for formulas
+                desc_row[desc] = row
+    
+                row += 1
+                continue
+    
+            # === STANDARD BEHAVIOR FOR ALL OTHER LINES ===
+    
+            # Determine fill
             if code:
                 row_fill = entry_fill
             else:
@@ -311,19 +338,19 @@ def add_pl_balance_sheet(wb, trial_balance_df, code_to_meta):
                     row_fill = total_fill
                 else:
                     row_fill = header_fill
-
+    
             desc_cell.fill = row_fill
             val_cell.fill = row_fill
-
+    
             # Column E: Tab
             tab_cell = ws.cell(row, 5)
             tab_cell.fill = row_fill
-
+    
             if code:
                 v = get_code_total(code)
                 val_cell.value = v
                 val_cell.number_format = "#,##0.00"
-
+    
                 if tab:
                     tab_cell.value = tab
                     if abs(v) > 0.00001:  # hyperlink only if non-zero
@@ -332,20 +359,22 @@ def add_pl_balance_sheet(wb, trial_balance_df, code_to_meta):
                         tab_cell.font = Font(color="0000FF", underline="single")
             else:
                 tab_cell.value = ""
-
-            # Bold headers / totals
+    
+            # Bold formatting for totals and headers
             if code == "" or "Total" in desc or desc in ("Gross Profit", "EBITDA", "Operating Profit", "Profit before tax"):
                 desc_cell.font = Font(bold=True)
-
+    
+            # Track rows for formulas
             desc_row[desc] = row
             if code:
                 code_row[code] = row
-
+    
             row += 1
-
+    
         # Borders around C–E
         apply_borders(ws, block_top, row - 1, 3, 5)
         return row + 1
+
 
     # === Write the three blocks ===
     r = 2
