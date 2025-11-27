@@ -1270,32 +1270,50 @@ def generate_reconciliation_file(trial_balance_file, entries_file, icp_code, map
     mapping_path = Path(mapping_path) if mapping_path else DEFAULT_MAPPING
     plc_path = Path(plc_path) if plc_path else DEFAULT_PLC
 
-    # Read user inputs (pandas handles file-like objects)
-    trial_balance = pd.read_excel(trial_balance_file)
-    entries = pd.read_excel(entries_file)
-    
-    # ✅ Required columns for entries
-    required_cols = {"G/L Account No.", "Posting Date", "Amount", "Amount (LCY)", "ICP CODE", "GAAP Code"}
-    
-    missing = [col for col in ["G/L Account No.", "Posting Date"] if col not in entries.columns]
-    
-    # Special handling for Amount column (can be named either)
-    if not ("Amount" in entries.columns or "Amount (LCY)" in entries.columns):
-        missing.append("Amount (LCY)")
-    
-    if "ICP CODE" not in entries.columns:
-        missing.append("ICP CODE")
-    
-    if "GAAP Code" not in entries.columns:
-        missing.append("GAAP Code")
-    
-    # ✅ Stop early if anything is missing
-    if missing:
-        raise ValueError(
-            "The uploaded All Entries file is missing required column(s): "
-            + ", ".join(missing)
-            + "\n\nPlease upload a correct All Entries file and try again."
-        )
+# Read user inputs (pandas handles file-like objects)
+trial_balance = pd.read_excel(trial_balance_file)
+entries = pd.read_excel(entries_file)
+
+# --- 🔧 Normalize column names early ---
+entries.columns = [str(c).strip() for c in entries.columns]
+
+# Standardize Amount column
+entries.rename(
+    columns=lambda c: "Amount (LCY)"
+    if str(c).strip().lower() in ["amount", "amount (lcy)"]
+    else c,
+    inplace=True,
+)
+
+# Standardize ICP column (accept ICP CODE, ICP Code, icp code, etc.)
+entries.rename(
+    columns=lambda c: "ICP CODE"
+    if str(c).strip().lower() == "icp code"
+    else c,
+    inplace=True,
+)
+
+# Standardize GAAP column (case-insensitive)
+entries.rename(
+    columns=lambda c: "GAAP Code"
+    if str(c).strip().lower() == "gaap code"
+    else c,
+    inplace=True,
+)
+
+# --- ✅ Required columns after normalization ---
+missing = []
+for col in ["G/L Account No.", "Posting Date", "Amount (LCY)", "ICP CODE", "GAAP Code"]:
+    if col not in entries.columns:
+        missing.append(col)
+
+if missing:
+    raise ValueError(
+        "The uploaded All Entries file is missing required column(s): "
+        + ", ".join(missing)
+        + "\n\nPlease upload a correct All Entries file and try again."
+    )
+
 
 
     # Load mapping tables
@@ -1304,9 +1322,6 @@ def generate_reconciliation_file(trial_balance_file, entries_file, icp_code, map
     # Apply mapping to trial balance
     trial_balance = apply_mapping(trial_balance, acct_to_code, code_to_meta)
 
-    # Normalise entries column names
-    entries.rename(columns=lambda c: "Amount (LCY)" if str(c).strip().lower() in ["amount", "amount (lcy)"] else c, inplace=True)
-    entries.rename(columns=lambda c: "ICP CODE" if str(c).strip().lower() == "icp code" else c, inplace=True)
 
     # Cast types & normalize
     trial_balance["Balance at Date"] = trial_balance["Balance at Date"].apply(to_float)
