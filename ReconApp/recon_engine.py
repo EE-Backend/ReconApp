@@ -500,19 +500,15 @@ def add_pl_balance_sheet(wb, trial_balance_df, code_to_meta):
     total_cl_val = sum_codes([str(c) for c in [31, 33, 34, 35, 36, 37, 38, 39]])
     total_liab_val = total_equity_val + total_ncl_val + total_cl_val
 
-    # === Correct colouring for Assets = Liabilities Control (based on Excel result) ===
-    
-    ctrl_formula_value = ws.cell(r_ctrl, 4).value  # read Excel's formula result
-    
-    try:
-        ctrl_formula_value = float(ctrl_formula_value)
-    except:
-        ctrl_formula_value = 999999  # force red if Excel gives a string or None
-    
-    ctrl_fill = green_fill if abs(ctrl_formula_value) < 0.01 else red_fill
-    
+    # Format the Assets = Liabilities Control line as a header
     for col in range(3, 6):
-        ws.cell(r_ctrl, col).fill = ctrl_fill
+        cell = ws.cell(r_ctrl, col)
+        cell.fill = header_fill
+    
+    # Bold description only
+    ws.cell(r_ctrl, 3).font = Font(bold=True)
+    # Value cell not bold
+    ws.cell(r_ctrl, 4).font = Font(bold=False)
 
 
     ws.column_dimensions["B"].hidden = True
@@ -552,16 +548,14 @@ def add_pl_balance_sheet(wb, trial_balance_df, code_to_meta):
         diff_cell.number_format = "#,##0.00"
         diff_cell.fill = entry_fill
     
-        # Evaluate actual Excel-calculated value for correct colouring
-        diff_formula_value = diff_cell.value if isinstance(diff_cell.value, (int, float)) else 0
-        try:
-            diff_formula_value = float(diff_formula_value)
-        except:
-            diff_formula_value = 999999
-    
-        fill = green_fill if abs(diff_formula_value) < 0.01 else red_fill
-        diff_label.fill = fill
-        diff_cell.fill = fill
+        
+        # Format "Diff." line as header-style row
+        diff_label.fill = header_fill
+        diff_cell.fill = header_fill
+        
+        # Bold label only
+        diff_label.font = Font(bold=True)
+        diff_cell.font = Font(bold=False)
     
         # Apply borders
         apply_borders(ws, box_top, row, 3, 4)
