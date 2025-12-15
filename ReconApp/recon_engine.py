@@ -87,7 +87,7 @@ def load_mapping(mapping_path=None):
     book = pd.read_excel(mapping_path, sheet_name=None)
 
     if "account_mapping" not in book or "mapping_directory" not in book:
-        raise KeyError("mapping_data4.xlsx must include sheets 'account_mapping' and 'mapping_directory'")
+        raise KeyError("mapping_data5.xlsx must include sheets 'account_mapping' and 'mapping_directory'")
 
     map_accounts = book["account_mapping"].rename(columns={"Mapping": "code"}).copy()
     map_dir = book["mapping_directory"].copy()
