@@ -17,7 +17,7 @@ TOLERANCE = 0.001
 # By default mapping and plc files are expected in ./static/
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
-DEFAULT_MAPPING = STATIC_DIR / "mapping_data4.xlsx"
+DEFAULT_MAPPING = STATIC_DIR / "mapping_data5.xlsx"
 DEFAULT_PLC = STATIC_DIR / "PLC_data.xlsx"
 
 
